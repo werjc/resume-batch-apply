@@ -1,0 +1,76 @@
+{
+  "manifest_version": 3,
+  "name": "一键批量投递简历",
+  "version": "1.6.0",
+  "description": "在各大招聘网站一键批量投递简历，支持定时投递和条件筛选",
+  "permissions": [
+    "storage",
+    "alarms",
+    "notifications",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://www.zhipin.com/*",
+    "https://www.zhaopin.com/*",
+    "https://www.iguopin.com/*",
+    "https://www.ncss.cn/*",
+    "https://www.51job.com/*",
+    "https://www.liepin.com/*",
+    "https://www.shixiseng.com/*",
+    "https://www.xiaoyoubang.com/*"
+  ],
+  "action": {
+    "default_title": "一键投递简历 — 点击打开/关闭面板"
+  },
+  "background": {
+    "service_worker": "background/service-worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.zhipin.com/*"],
+      "js": ["content/adapters/base.js", "content/adapters/zhipin.js", "content/content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.zhaopin.com/*"],
+      "js": ["content/adapters/base.js", "content/adapters/zhaopin.js", "content/content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.iguopin.com/*"],
+      "js": ["content/adapters/base.js", "content/adapters/iguopin.js", "content/content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.ncss.cn/*"],
+      "js": ["content/adapters/base.js", "content/adapters/ncss.js", "content/content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.51job.com/*"],
+      "js": ["content/adapters/base.js", "content/adapters/51job.js", "content/content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.liepin.com/*"],
+      "js": ["content/adapters/base.js", "content/adapters/liepin.js", "content/content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.shixiseng.com/*"],
+      "js": ["content/adapters/base.js", "content/adapters/shixiseng.js", "content/content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.xiaoyoubang.com/*"],
+      "js": ["content/adapters/base.js", "content/adapters/xiaoyoubang.js", "content/content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

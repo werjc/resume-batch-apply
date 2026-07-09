@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>一键投递简历</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <!-- 标题栏 -->
+    <header class="header">
+      <h1 class="title">🚀 一键投递</h1>
+    </header>
+
+    <!-- 网站状态 -->
+    <section class="site-info">
+      <div class="info-row">
+        <span class="label">当前网站：</span>
+        <span id="siteName" class="value">--</span>
+      </div>
+      <div class="info-row">
+        <span class="label">登录状态：</span>
+        <span id="loginStatus" class="value status-unknown">检测中...</span>
+      </div>
+    </section>
+
+    <!-- 错误提示 -->
+    <div id="errorMsg" class="error-msg hidden"></div>
+
+    <!-- 筛选条件（可折叠） -->
+    <section class="filter-section">
+      <div id="filterToggle" class="filter-header">
+        <span class="filter-arrow">▼</span>
+        <span>筛选条件</span>
+      </div>
+      <div id="filterPanel" class="filter-panel">
+        <div class="filter-row">
+          <label for="filterDate">发布日期：</label>
+          <select id="filterDate">
+            <option value="all">不限</option>
+            <option value="1">24小时内</option>
+            <option value="3">3天内</option>
+            <option value="7">7天内</option>
+            <option value="14">14天内</option>
+            <option value="30">30天内</option>
+          </select>
+        </div>
+        <div class="filter-row">
+          <label for="filterCompanyType">公司类型：</label>
+          <select id="filterCompanyType">
+            <option value="all">不限</option>
+            <option value="listed">上市公司</option>
+            <option value="state">国企/央企</option>
+            <option value="foreign">外企</option>
+            <option value="private">民营企业</option>
+            <option value="startup">创业公司</option>
+          </select>
+        </div>
+        <div class="filter-row">
+          <label for="filterJobType">岗位类型：</label>
+          <select id="filterJobType">
+            <option value="all">不限</option>
+            <option value="fulltime">全职</option>
+            <option value="intern">实习</option>
+            <option value="parttime">兼职</option>
+          </select>
+        </div>
+        <div class="filter-row">
+          <label for="filterEducation">学历要求：</label>
+          <select id="filterEducation">
+            <option value="all">不限</option>
+            <option value="none">学历不限</option>
+            <option value="associate">大专及以上</option>
+            <option value="bachelor">本科及以上</option>
+            <option value="master">硕士及以上</option>
+            <option value="doctor">博士</option>
+          </select>
+        </div>
+        <button id="btnApplyFilter" class="btn btn-sm btn-outline">应用筛选</button>
+      </div>
+    </section>
+
+    <!-- 深度爬取工具栏 -->
+    <section class="crawl-toolbar">
+      <div class="crawl-row">
+        <select id="crawlPages" class="crawl-page-select">
+          <option value="1">仅当前页</option>
+          <option value="3">爬取 3 页</option>
+          <option value="5" selected>爬取 5 页</option>
+          <option value="10">爬取 10 页</option>
+          <option value="20">爬取 20 页</option>
+        </select>
+        <button id="btnCrawl" class="btn btn-accent btn-sm">🔍 深度爬取</button>
+        <button id="btnRefresh" class="btn btn-outline btn-sm">🔄 刷新</button>
+      </div>
+      <div id="crawlProgress" class="crawl-progress hidden">
+        <span id="crawlProgressText">正在爬取第 1/5 页...</span>
+        <button id="btnStopCrawl" class="btn-text">⏹ 停止</button>
+      </div>
+    </section>
+
+    <!-- 岗位列表 -->
+    <section class="job-list-section">
+      <div class="job-list-header">
+        <span id="jobCount" class="job-count">搜索到 0 个岗位</span>
+        <div class="job-list-actions">
+          <button id="btnSelectAll" class="btn-text">全选</button>
+          <button id="btnInvert" class="btn-text">反选</button>
+        </div>
+      </div>
+      <div id="jobList" class="job-list">
+        <div class="job-list-empty">请打开招聘网站搜索结果页</div>
+      </div>
+    </section>
+
+    <!-- 进度条 -->
+    <div id="progressContainer" class="progress-container hidden">
+      <div class="progress-bar-wrapper">
+        <div id="progressBar" class="progress-bar" style="width: 0%"></div>
+      </div>
+      <div id="progressText" class="progress-text">0/0</div>
+    </div>
+
+    <!-- 操作按钮 -->
+    <section class="actions">
+      <div class="btn-row">
+        <button id="btnApplyNow" class="btn btn-primary btn-lg">
+          🚀 立即投递
+        </button>
+        <button id="btnSchedule" class="btn btn-secondary btn-lg">
+          ⏰ 定时投递
+        </button>
+      </div>
+      <button id="btnStop" class="btn btn-danger btn-full hidden">
+        ⏹ 停止投递
+      </button>
+    </section>
+
+    <!-- 定时投递弹窗 -->
+    <div id="scheduleModal" class="modal hidden">
+      <div class="modal-content">
+        <h3 class="modal-title">⏰ 设定投递时间</h3>
+        <div class="modal-body">
+          <label for="scheduleTime">选择日期和时间：</label>
+          <input type="datetime-local" id="scheduleTime" class="datetime-input">
+          <p class="modal-hint">到设定时间后，将自动在当前页面投递已选岗位</p>
+        </div>
+        <div class="modal-footer">
+          <button id="btnScheduleCancel" class="btn btn-outline">取消</button>
+          <button id="btnScheduleConfirm" class="btn btn-primary">确认定时</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 结果提示 -->
+    <div id="toast" class="toast hidden"></div>
+  </div>
+
+  <script src="../utils/storage.js"></script>
+  <script src="../utils/scheduler.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
