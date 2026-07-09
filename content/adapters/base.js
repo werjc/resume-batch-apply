@@ -405,7 +405,10 @@ class BaseAdapter {
    */
   async _fetchAndParsePage(url) {
     try {
-      const resp = await fetch(url, { credentials: 'include' });
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 8000);
+      const resp = await fetch(url, { credentials: 'include', signal: ctrl.signal });
+      clearTimeout(t);
       if (!resp.ok) return [];
       const html = await resp.text();
       const parser = new DOMParser();
@@ -495,110 +498,124 @@ class BaseAdapter {
   }
 
   /**
-   * 多页爬取——并行 fetch 所有页，汇总岗位
-   * @param {string} baseUrl
-   * @param {number} maxPages
-   * @param {Function} onProgress (page, total)
-   * @returns {Promise<Array<Object>>}
+   * 多页爬取——URL拼接为主，硬超时保护
    */
-  async crawlAllPages(baseUrl, maxPages, onProgress) {
-    const urls = this._generatePageUrls(baseUrl, maxPages);
+  async crawlAllPages(baseUrl, maxPages, onProgress, stopSignal) {
     const allJobs = [];
     const seen = new Set();
+    const startTime = Date.now();
+    const MAX_TIME = 20000; // 硬超时 20 秒
 
-    // 首页用当前 DOM 解析
-    const page1Cards = this._getAllPossibleCards(document);
-    for (const el of page1Cards) {
+    // 首页 —— 解析当前 DOM
+    const p1 = this._getAllPossibleCards(document);
+    for (const el of p1) {
+      if (stopSignal && stopSignal.stopped) break;
       const info = this.extractJobInfo(el);
-      if (!seen.has(info.id)) {
-        seen.add(info.id);
-        delete info.element;
-        allJobs.push(info);
-      }
+      if (!seen.has(info.id)) { seen.add(info.id); delete info.element; allJobs.push(info); }
     }
-    if (onProgress) onProgress(1, Math.max(urls.length, maxPages));
+    if (onProgress) onProgress(1, maxPages);
+    if (stopSignal && stopSignal.stopped) { allJobs.forEach(j => { j.risk = this._assessJobRisk(j); }); return allJobs; }
 
-    // 如果只生成了1个URL（SPA无分页参数），改用滚动加载
+    // 生成多页 URL
+    const urls = this._generatePageUrls(baseUrl, maxPages);
     if (urls.length <= 1) {
-      const scrolled = await this._crawlByScrolling(maxPages, allJobs, seen, onProgress);
-      return scrolled;
-    }
-
-    // 后续页面并行 fetch（最多同时 3 个）
-    const remainingUrls = urls.slice(1);
-    const batchSize = 3;
-
-    for (let i = 0; i < remainingUrls.length; i += batchSize) {
-      const batch = remainingUrls.slice(i, i + batchSize);
-      const results = await Promise.all(
-        batch.map(url => this._fetchAndParsePage(url))
-      );
-
-      for (const jobs of results) {
-        for (const job of jobs) {
-          if (!seen.has(job.id)) {
-            seen.add(job.id);
-            allJobs.push(job);
-          }
-        }
+      // 没有分页URL → 用DOM找翻页按钮，直接点击
+      await this._crawlByClicking(maxPages, allJobs, seen, onProgress, stopSignal, startTime, MAX_TIME);
+    } else {
+      // 有分页URL → fetch
+      const remaining = urls.slice(1);
+      for (let i = 0; i < remaining.length && Date.now() - startTime < MAX_TIME; i++) {
+        if (stopSignal && stopSignal.stopped) break;
+        const jobs = await this._fetchAndParsePage(remaining[i]);
+        for (const job of jobs) { if (!seen.has(job.id)) { seen.add(job.id); allJobs.push(job); } }
+        if (onProgress) onProgress(i + 2, urls.length);
       }
-
-      if (onProgress) onProgress(Math.min(i + batchSize + 1, urls.length), urls.length);
     }
 
-    // 批量联网解析公司类型
-    await this._resolveCompanyTypesBatch(allJobs);
-
+    allJobs.forEach(j => { j.risk = this._assessJobRisk(j); });
     return allJobs;
   }
 
-  /**
-   * SPA滚动爬取——滚动页面触发懒加载，持续收集新卡片
-   */
-  async _crawlByScrolling(maxPages, allJobs, seen, onProgress) {
-    let prevCount = allJobs.length;
-    let noNewRounds = 0;
+  /** 点击翻页 */
+  async _crawlByClicking(maxPages, allJobs, seen, onProgress, stopSignal, startTime, MAX_TIME) {
+    for (let page = 2; page <= maxPages && Date.now() - startTime < MAX_TIME; page++) {
+      if (stopSignal && stopSignal.stopped) break;
 
-    for (let page = 2; page <= maxPages; page++) {
-      // 滚动到底部
-      window.scrollTo(0, document.body.scrollHeight);
-      // 等待懒加载
+      const nextBtn = this._findNextPageButton();
+      if (!nextBtn) break;
+
+      nextBtn.scrollIntoView({ block: 'center' });
+      await new Promise(r => setTimeout(r, 200));
+      nextBtn.click();
       await new Promise(r => setTimeout(r, 1500));
 
-      // 检查是否有新卡片
       let newCards = 0;
-      for (let retry = 0; retry < 3; retry++) {
-        await new Promise(r => setTimeout(r, 600));
+      for (let r = 0; r < 4; r++) {
+        if (stopSignal && stopSignal.stopped || Date.now() - startTime > MAX_TIME) break;
+        await new Promise(r => setTimeout(r, 400));
         const cards = this._getAllPossibleCards(document);
         for (const el of cards) {
+          if (stopSignal && stopSignal.stopped) break;
           const info = this.extractJobInfo(el);
-          if (!seen.has(info.id)) {
-            seen.add(info.id);
-            delete info.element;
-            allJobs.push(info);
-            newCards++;
-          }
+          if (!seen.has(info.id)) { seen.add(info.id); delete info.element; allJobs.push(info); newCards++; }
         }
         if (newCards > 0) break;
       }
-
       if (onProgress) onProgress(page, maxPages);
-      if (newCards === 0) {
-        noNewRounds++;
-        if (noNewRounds >= 2) break; // 连续2轮没新数据，停止
-      } else {
-        noNewRounds = 0;
-      }
-      prevCount = allJobs.length;
+      if (newCards === 0) break;
     }
+  }
 
-    // 滚回顶部
-    window.scrollTo(0, 0);
+  _findNextPageButton() {
+    const all = document.querySelectorAll('a, button, span[role="button"], li[class*="next"]');
+    for (const el of all) {
+      if (!el.offsetParent || el.disabled || el.classList.contains('disabled')) continue;
+      const t = el.textContent.trim().toLowerCase();
+      if (/^[>⟩›»]$/.test(t) || t === '下一页' || t === '下页' || t === 'next') return el;
+    }
+    return null;
+  }
 
-    // 批量联网解析公司类型
-    await this._resolveCompanyTypesBatch(allJobs);
+  // ========== 岗位风险分析 ==========
 
-    return allJobs;
+  /**
+   * 分析岗位诈骗/虚假风险——基于标题和公司信息
+   * @returns {{ level: 'low'|'medium'|'high', score: number, reasons: string[] }}
+   */
+  _assessJobRisk(job) {
+    const title = (job.title || '').toLowerCase();
+    const company = (job.company || '').toLowerCase();
+    const tags = (job.tags || []).join(' ').toLowerCase();
+    const all = title + ' ' + company + ' ' + tags;
+    const reasons = [];
+    let score = 0;
+
+    // === 高危特征 ===
+    if (/日结|日薪/.test(all)) { score += 25; reasons.push('日结/日薪——常见于诈骗兼职'); }
+    if (/押金|保证金|培训费|报名费|手续费/.test(all)) { score += 30; reasons.push('提及押金/培训费等——任何要求先交钱的都是骗局'); }
+    if (/在家.*高薪|高薪.*在家|远程.*高薪/.test(all)) { score += 20; reasons.push('远程+高薪组合——常见骗局模式'); }
+    if (/无需经验.*高薪|高薪.*无需经验|不限学历.*高薪/.test(all)) { score += 20; reasons.push('低门槛+高薪——不符合市场规律'); }
+    if (/急聘.*大量|大量.*急聘|高薪.*急聘/.test(all)) { score += 15; reasons.push('高薪急聘——常见于虚假招聘'); }
+    if (/月入.*万|月薪.*万|年入.*百万/.test(all) && /实习|兼职|新手|入门/.test(all)) { score += 25; reasons.push('兼职/实习+月入过万——极可能是虚假信息'); }
+    if (/网络.*兼职|兼职.*网络|打字.*员|刷单|刷客|点赞.*员/.test(all)) { score += 35; reasons.push('刷单/打字员——经典网络诈骗'); }
+    if (/数字货币|虚拟货币|区块链.*兼职|挖矿/.test(all)) { score += 20; reasons.push('数字货币相关——高风险'); }
+    if (/代购|代收|转账.*兼职|跑分/.test(all)) { score += 35; reasons.push('代购/跑分——可能涉及洗钱等违法活动'); }
+
+    // === 中危特征 ===
+    if (company === '未知公司') { score += 10; reasons.push('公司信息缺失'); }
+    if (/创业公司|天使轮|未融资/.test(all)) { score += 5; reasons.push('初创公司——稳定性待确认'); }
+    if (title.length < 4 && title.length > 0) { score += 10; reasons.push('岗位名称过于简短模糊'); }
+    if (/不限学历/.test(all) && /\d+[kKwW万]/.test(all)) { score += 10; reasons.push('不限学历但薪资较高——需核实'); }
+
+    // === 低危加分项（降低风险） ===
+    if (/上市公司|上市企业|a股|港股|美股|央企|国企/.test(all)) { score -= 15; reasons.push('知名企业/上市公司'); }
+    if (/中国500|世界500|行业龙头|独角兽/.test(all)) { score -= 10; }
+
+    let level = 'low';
+    if (score >= 25) level = 'high';
+    else if (score >= 12) level = 'medium';
+
+    return { level, score: Math.max(0, score), reasons };
   }
 
   /**
@@ -749,6 +766,34 @@ class BaseAdapter {
   }
 
   /**
+   * 提取公司详情页URL——从岗位卡片中找公司链接
+   */
+  _extractCompanyUrl(element) {
+    const selectors = [
+      'a[href*="company"]', 'a[href*="employer"]', 'a[href*="enterprise"]',
+      'a[href*="/com/"]', 'a[href*="/org/"]',
+      'a[ka*="company"]', 'a[ka*="brand"]', 'a[ka*="employer"]',
+      'a[data-company]', 'a[data-employer]',
+      '.company-name a', '.company__name a', '.cname a',
+      '.company-info a', '.company-text a',
+    ];
+    for (const sel of selectors) {
+      try {
+        const link = element.querySelector(sel);
+        if (link && link.href && !link.href.startsWith('javascript')) {
+          return link.href;
+        }
+      } catch (e) { /* skip */ }
+    }
+    // 兜底：找包含"公司"文本的链接
+    const allLinks = Array.from(element.querySelectorAll('a[href]'));
+    for (const link of allLinks) {
+      if (/公司|企业|employer|company/i.test(link.textContent) && link.href) return link.href;
+    }
+    return '';
+  }
+
+  /**
    * 通用详情页URL提取
    * @param {Element} element 岗位卡片元素
    * @returns {string}
@@ -880,7 +925,7 @@ class BaseAdapter {
     if (/学历不限|不限学历|无学历要求|经验不限.*学历不限|学历.*不限/.test(text)) return 'none';
 
     // === 模糊模式匹配 ===
-    // "统招" 单独出现 → 通常是本科（统招本科是中国最常见表述）
+    // "统招" 单独出现 → 通常是本科
     if (/统招|全日制/.test(text) && !/大专|专科|高中|中专/.test(text)) return 'bachelor';
 
     // "211|985|双一流|重点大学" → 隐含本科
@@ -889,8 +934,8 @@ class BaseAdapter {
     // "研究生" 单独出现 → 硕士
     if (/研究生/.test(text) && !/博士|本科/.test(text)) return 'master';
 
-    // === 默认：未检测到 → 视为不限 ===
-    return 'none';
+    // === 默认：中国大多数岗位要求本科 ===
+    return 'bachelor';
   }
 
   /**
@@ -902,129 +947,72 @@ class BaseAdapter {
    * 公司类型检测——本地标签解析 + 已知公司模式匹配
    * 各适配器可以覆写以添加站点特有逻辑，但最后应 fallback 到这里
    */
+  /**
+   * 公司类型检测——大规模关键词库 + 默认民营
+   *
+   * 逻辑：中国绝大多数企业是民营。只有少数是国企/上市/外资/创业。
+   * 因此用排除法：先精确识别少数派，剩下的统统归为民营。
+   */
   detectCompanyType(companyName, element) {
     const el = element || document;
-    const name = (companyName || '').toLowerCase();
+    const name = (companyName || '').toLowerCase().replace(/\s+/g, '');
     const text = (el.textContent || '').toLowerCase();
 
-    // === 第1层：从卡片中解析公司标签 ===
-    const tagEls = el.querySelectorAll('[class*="tag"], [class*="type"], [class*="label"], [class*="badge"], [class*="icon"], span, em, i');
+    // === 第1层：卡片标签（最高优先级） ===
+    const tagEls = el.querySelectorAll('[class*="tag"], [class*="type"], [class*="label"], [class*="badge"], span, em, i');
     for (const tag of tagEls) {
       const t = tag.textContent.trim();
-      // 上市公司
       if (/上市|A股|B股|H股|港股|美股|纳斯达克|纽交所|IPO|已上市|深交所|上交所|北交所|创业板|科创板|新三板/.test(t)) return 'listed';
-      // 国企/央企
-      if (/国企|央企|国有|国资委|国有独资|全民所有制|事业单位|机关单位|政府机构/.test(t)) return 'state';
-      // 外资
-      if (/外资|外商|外企|合资|中外合资|欧美企业|日资|韩资|德资|法资|英资|美资|港澳台/.test(t)) return 'foreign';
-      // 民营
+      if (/国企|央企|国有|国资委|国有独资|全民所有制|事业单位|机关单位|政府机构|党政机关/.test(t)) return 'state';
+      if (/外资|外商|外企|合资|中外合资|欧美企|日资|韩资|德资|法资|英资|美资|港澳台资|WFOE/i.test(t)) return 'foreign';
+      if (/天使轮|A轮|B轮|C轮|D轮|Pre-A|Pre-IPO|初创|创业|未融资|种子轮/.test(t)) return 'startup';
       if (/民营|私企|私营|民企|个体工商户/.test(t)) return 'private';
-      // 创业
-      if (/天使轮|A轮|B轮|C轮|D轮|Pre-A|Pre-IPO|初创|创业|不需要融资|未融资|种子轮/.test(t)) return 'startup';
     }
 
-    // === 第2层：从公司名推断 ===
-    // 央企/国企模式
-    if (/^(中国|国家|中央|中华|中核|中航|中船|中兵|中电|中石油|中石化|中海油|中铁|中交|中建|中冶|中粮|中化|中航工|中国航天|中国兵器|中国电子|中国电科)/.test(name)) return 'state';
-    if (/银行$|保险$|证券$|基金$|信托$|期货$/.test(name) && /中国|国家|中央|华夏|中信|光大|招商|浦发|兴业|民生|平安/.test(name)) return 'state';
-    if (/^(北京|上海|广州|深圳|杭州|成都|武汉|南京|天津|重庆|苏州|西安|长沙|青岛|大连|宁波|厦门|济南|合肥|郑州|东莞|佛山)(市)?(人民政府|国资委|国有|城市|地铁|公交|水务|燃气|热力|城建|城投)/.test(name)) return 'state';
-    // 大学/研究院/设计院 → 事业单位/国企
-    if (/大学$|学院$|研究院$|设计院$|研究所$|实验室$/.test(name) && !/民办/.test(name)) return 'state';
+    // === 第2层：公司名关键词推断 ===
 
-    // 知名上市互联网公司
-    const listedCompanies = /^(阿里巴巴|腾讯|百度|京东|网易|美团|拼多多|字节跳动|小米|快手|滴滴|哔哩哔哩|携程|贝壳|蔚来|理想|小鹏|比亚迪|宁德时代|中芯国际|海康威视|大疆|华为|中兴|联想|海尔|美的|格力|TCL|海信|万科|碧桂园|保利|恒大|融创|华润|招商局|中信|平安|中国人寿|太平洋保险|新华保险|工商银行|建设银行|农业银行|中国银行|交通银行)$/;
-    if (listedCompanies.test(name)) return 'listed';
+    // ▸ 央企/国企（中字头、国字头、地方国资）
+    if (/^(中国|国家|中央|中华|中核|中航|中船|中兵|中电|中石油|中石化|中海油|中铁|中交|中建|中冶|中粮|中化|中煤|中广核|中车|中航工业|中国航天|中国兵器|中国电子|中国电科|中国信科|中国商飞|中国邮政|中国烟草|中国黄金|中国稀土|中国卫星|中国核工业|中国船舶|中国兵器装备|中国航空发动机)/.test(name)) return 'state';
+    if (/^(国投|国电|国网|国药|国机|国开|国新|国盛|国泰|国元|国海|国联|国金|国信|国家电网|南方电网|国家能源|国家电投|国家管网)/.test(name)) return 'state';
+    if (/^(华能|华电|大唐|三峡|中核|中广核|中国石油|中国石化|中国海油|中国化工|中国化学|中国建材|中国中车|中国通号|中国中铁|中国铁建|中国交建|中国电建|中国能建|中国建筑|中国中冶|中国有色|中国铝业|中国五矿|中国黄金)/.test(name)) return 'state';
+    if (/^(中国移动|中国联通|中国电信|中国广电|中国星网)/.test(name)) return 'state';
+    if (/^(中国银行|工商银行|农业银行|建设银行|交通银行|邮储银行|招商银行|中信银行|光大银行|华夏银行|民生银行|兴业银行|浦发银行|平安银行|北京银行|上海银行|江苏银行|南京银行|宁波银行)/.test(name)) return 'state';
+    if (/^(中国人寿|中国人保|中国太保|中国太平|中国信保|中国再保|新华保险|泰康保险|阳光保险)/.test(name)) return 'state';
+    if (/^(中信证券|中信建投|中金|华泰证券|国泰君安|海通证券|申万宏源|银河证券|招商证券|广发证券|光大证券|安信证券)/.test(name)) return 'state';
+    if (/^([一-龥]{2,4})(市|省|区)(人民政府|国资委|国有|城市投资|建设投资|交通投资|水务|燃气|热力|地铁|公交|城建|城投|金控|国控|发投|水投|交投|旅投)/.test(name)) return 'state';
+    if (/大学$|学院$|研究院$|设计院$|研究所$|实验室$|科学院$/.test(name) && !/民办|独立学院/.test(name)) return 'state';
 
-    // 知名外企
-    const foreignCompanies = /^(微软|苹果|谷歌|亚马逊|Meta|特斯拉|IBM|Intel|AMD|Nvidia|Qualcomm|SAP|Oracle|Siemens|Bosch|Sony|Samsung|LG|Toyota|Honda|BMW|Mercedes|Volkswagen|Audi|Porsche|通用|福特|宝洁|联合利华|雀巢|可口可乐|百事|耐克|阿迪达斯|LVMH|欧莱雅|辉瑞|强生|罗氏|诺华|拜耳|壳牌|BP|埃克森|道达尔|摩根|高盛|花旗|汇丰|渣打)$/;
-    if (foreignCompanies.test(name)) return 'foreign';
+    // ▸ 知名上市公司（互联网/科技/制造/消费/医药/地产）
+    if (/^(阿里巴巴|阿里云|淘宝|天猫|蚂蚁|支付宝|腾讯|微信|百度|京东|网易|美团|拼多多|字节跳动|抖音|今日头条|小米|快手|滴滴|哔哩哔哩|携程|贝壳|蔚来|理想|小鹏|比亚迪|宁德时代|中芯国际|海康威视|大疆|华为|中兴|联想|海尔|美的|格力|TCL|海信|创维|长虹|康佳)$/.test(name)) return 'listed';
+    if (/^(万科|碧桂园|保利|恒大|融创|华润置地|龙湖|招商蛇口|绿城|金地|新城|旭辉|世茂|阳光城|中南|金茂|雅居乐|远洋|华侨城|越秀|建发|首开|城建发展|金融街)$/.test(name)) return 'listed';
+    if (/^(恒瑞医药|迈瑞医疗|药明康德|百济神州|信达生物|翰森制药|中国生物制药|石药集团|复星医药|爱尔眼科|智飞生物|康泰生物|华大基因|金域医学|迪安诊断)$/.test(name)) return 'listed';
+    if (/^(中国平安|中国人寿|中国太保|新华保险|中国人保|中信证券|东方财富|同花顺)$/.test(name)) return 'listed';
+    if (/^(牧原股份|温氏股份|新希望|海大集团|双汇发展|金龙鱼|伊利|蒙牛|光明乳业|海天味业|中炬高新|安井食品|三全食品|绝味食品)$/.test(name)) return 'listed';
+    if (/^(隆基绿能|通威股份|阳光电源|晶澳科技|天合光能|晶科能源|中环股份|福斯特|福莱特|先导智能|汇川技术|国电南瑞|特变电工)$/.test(name)) return 'listed';
+    if (/^(中国中免|王府井|首旅|锦江|华住|百胜中国|海底捞|呷哺呷哺|九毛九|瑞幸)$/.test(name)) return 'listed';
+    if (/^(顺丰|中通|圆通|韵达|申通|极兔|德邦|京东物流|满帮|货拉拉)$/.test(name)) return 'listed';
+    if (/^(中国神华|陕西煤业|兖矿能源|中煤能源|紫金矿业|洛阳钼业|山东黄金|赣锋锂业|天齐锂业|华友钴业|寒锐钴业)$/.test(name)) return 'listed';
+    if (/^(三一重工|中联重科|徐工|柳工|山推|厦工|潍柴动力|玉柴|云内动力|全柴动力)$/.test(name)) return 'listed';
+    if (/^(中国软件|中国长城|太极股份|浪潮信息|中科曙光|紫光股份|深信服|奇安信|启明星辰|绿盟科技|天融信|安恒信息)$/.test(name)) return 'listed';
+    if (/^(美的集团|格力电器|海尔智家|老板电器|苏泊尔|九阳|小熊电器|新宝股份|科沃斯|石头科技|追觅)$/.test(name)) return 'listed';
 
-    // 知名创业/独角兽公司名 → 暂不硬编码，靠标签
+    // ▸ 外资企业（欧美日韩知名企业）
+    if (/^(微软|microsoft|苹果|apple|谷歌|google|亚马逊|amazon|meta|facebook|特斯拉|tesla|ibm|intel|英特尔|amd|nvidia|英伟达|qualcomm|高通|broadcom|博通|micron|美光|texas instruments|德州仪器|analog devices|亚德诺|cisco|思科|juniper|瞻博|hp|惠普|dell|戴尔|lenovo|联想)$/i.test(name)) return 'foreign';
+    if (/^(sap|oracle|甲骨文|salesforce|赛富时|servicenow|workday|adobe|欧特克|autodesk|vmware|威睿|red hat|红帽|splunk|databricks|snowflake|palantir)$/i.test(name)) return 'foreign';
+    if (/^(siemens|西门子|bosch|博世|abb|施耐德|schneider|ge|通用电气|honeywell|霍尼韦尔|emerson|艾默生|rockwell|罗克韦尔|danaher|丹纳赫|thermo fisher|赛默飞|agilent|安捷伦)$/i.test(name)) return 'foreign';
+    if (/^(sony|索尼|samsung|三星|lg|panasonic|松下|hitachi|日立|toshiba|东芝|fujitsu|富士通|nec|夏普|sharp|mitsubishi|三菱|fujifilm|富士|canon|佳能|nikon|尼康|olympus|奥林巴斯)$/i.test(name)) return 'foreign';
+    if (/^(toyota|丰田|honda|本田|nissan|日产|bmw|宝马|mercedes|奔驰|volkswagen|大众|audi|奥迪|porsche|保时捷|ford|福特|gm|通用汽车|tesla|特斯拉|volvo|沃尔沃|jaguar|捷豹|land rover|路虎|lexus|雷克萨斯|subaru|斯巴鲁|mazda|马自达|hyundai|现代|kia|起亚)$/i.test(name)) return 'foreign';
+    if (/^(p&g|宝洁|unilever|联合利华|nestle|雀巢|coca.?cola|可口可乐|pepsi|百事|nike|耐克|adidas|阿迪达斯|lvmh|l'oreal|欧莱雅|estee lauder|雅诗兰黛|shiseido|资生堂|luxe|路威酩轩|chanel|香奈儿|hermes|爱马仕|kering|开云|richemont|历峰)$/i.test(name)) return 'foreign';
+    if (/^(pfizer|辉瑞|johnson|强生|roche|罗氏|novartis|诺华|bayer|拜耳|merck|默克|默沙东|sanofi|赛诺菲|gsk|葛兰素|astrazeneca|阿斯利康|abbvie|艾伯维|gilead|吉利德|amgen|安进|lilly|礼来|novo nordisk|诺和诺德)$/i.test(name)) return 'foreign';
+    if (/^(shell|壳牌|bp|exxon|埃克森|total|道达尔|chevron|雪佛龙|schlumberger|斯伦贝谢|halliburton|哈里伯顿|baker hughes|贝克休斯)$/i.test(name)) return 'foreign';
+    if (/^(morgan stanley|摩根|goldman sachs|高盛|jpmorgan|摩根大通|citi|花旗|hsbc|汇丰|standard chartered|渣打|deutsche bank|德意志|ubs|瑞银|credit suisse|瑞信|barclays|巴克莱|bnp paribas|法巴|societe generale|法兴)$/i.test(name)) return 'foreign';
+    if (/^(mckinsey|麦肯锡|bain|贝恩|bcg|波士顿咨询|deloitte|德勤|pwc|普华永道|ey|安永|kpmg|毕马威|accenture|埃森哲|infosys|tcs|wipro|cognizant|hcl)$/i.test(name)) return 'foreign';
 
-    // === 第3层：从公司名后缀推断 ===
-    if (/股份有限$/.test(name) || /^[一-龥]{2,4}(股份|控股)$/.test(name)) {
-      // 股份公司→大概率民营或上市，但如果前面标签没匹配到就不确定了
-      // 不做最终判断，继续往下走
-    }
+    // ▸ 创业公司（从公司名无法判断，但标签已覆盖）
 
-    // === 第4层：联网查询（只在明确请求时使用，避免频繁请求） ===
-    // 此层在 _resolveCompanyTypesBatch 中触发
-
-    return 'unknown';
-  }
-
-  /**
-   * 批量联网查询公司类型——深度爬取后调用
-   * 对 unknown 的公司，fetch 其详情页解析类型，带缓存
-   */
-  async _resolveCompanyTypesBatch(jobs) {
-    const cache = this._companyCache || (this._companyCache = new Map());
-    const unknownJobs = jobs.filter(j => j.companyType === 'unknown' && j.company !== '未知公司' && j.url);
-    if (unknownJobs.length === 0) return jobs;
-
-    // 去重：同一公司只查一次
-    const toFetch = [];
-    const seen = new Set();
-    for (const j of unknownJobs) {
-      const key = j.company + '|' + (j.url || '');
-      if (seen.has(key) || cache.has(key)) continue;
-      seen.add(key);
-      toFetch.push(j);
-    }
-
-    // 最多查 8 个公司（避免网络开销过大）
-    const batch = toFetch.slice(0, 8);
-    const results = await Promise.allSettled(
-      batch.map(j => this._fetchCompanyTypeFromPage(j.url, j.company))
-    );
-
-    for (let i = 0; i < batch.length; i++) {
-      const type = results[i].status === 'fulfilled' ? results[i].value : 'unknown';
-      const key = batch[i].company + '|' + (batch[i].url || '');
-      cache.set(key, type);
-    }
-
-    // 应用缓存到所有 job
-    for (const j of jobs) {
-      if (j.companyType !== 'unknown') continue;
-      const key = j.company + '|' + (j.url || '');
-      if (cache.has(key)) j.companyType = cache.get(key);
-    }
-
-    return jobs;
-  }
-
-  /**
-   * fetch 公司详情页，提取公司类型
-   */
-  async _fetchCompanyTypeFromPage(url, companyName) {
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 5000);
-      const resp = await fetch(url, { credentials: 'include', signal: controller.signal });
-      clearTimeout(timeout);
-      if (!resp.ok) return 'unknown';
-
-      const html = await resp.text();
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(html, 'text/html');
-      const bodyText = (doc.body?.textContent || '').toLowerCase();
-
-      // 上市公司
-      if (/上市|a股|b股|h股|港股|美股|ipo|证券代码|股票代码|深交所|上交所/.test(bodyText)) return 'listed';
-      // 国企
-      if (/国有|国企|央企|国资委|国有独资|全民所有|事业单位/.test(bodyText)) return 'state';
-      // 外资
-      if (/外商|外资|外企|中外合资|独资.*外|wfoe|foreign/i.test(bodyText)) return 'foreign';
-      // 民营
-      if (/民营|私营|民企/.test(bodyText)) return 'private';
-      // 创业
-      if (/天使轮|a轮|b轮|pre-a|初创|创业|不需要融资/.test(bodyText)) return 'startup';
-
-      return 'unknown';
-    } catch (e) {
-      return 'unknown';
-    }
+    // === 第3层：排除法兜底 → 默认民营 ===
+    // 中国注册企业 99%+ 是民营，未匹配到特殊类型的默认为民营
+    return 'private';
   }
 
   /**

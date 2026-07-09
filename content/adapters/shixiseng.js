@@ -58,6 +58,7 @@ class ShixisengAdapter extends BaseAdapter {
   extractJobInfo(element) {
     const { title, company } = this._extractBoth(element);
     const url = this._extractJobUrl(element);
+    const companyUrl = this._extractCompanyUrl(element);
     const salaryEl = element.querySelector('[class*="salary"], [class*="pay"]');
     const dateEl = element.querySelector('[class*="time"], [class*="date"]');
     const locationEl = element.querySelector('[class*="location"], [class*="city"]');
@@ -66,7 +67,7 @@ class ShixisengAdapter extends BaseAdapter {
 
     return {
       id: 'sxs_' + btoa(unescape(encodeURIComponent(title + company))).slice(0, 32),
-      title, company, url,
+      title, company, url, companyUrl,
       salary: salaryEl ? salaryEl.textContent.trim() : '',
       location: locationEl ? locationEl.textContent.trim() : '',
       date: dateEl ? dateEl.textContent.trim() : '',

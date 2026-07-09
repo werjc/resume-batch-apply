@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "一键批量投递简历",
-  "version": "1.6.0",
+  "version": "2.5.0",
   "description": "在各大招聘网站一键批量投递简历，支持定时投递和条件筛选",
   "permissions": [
     "storage",
@@ -18,7 +18,10 @@
     "https://www.51job.com/*",
     "https://www.liepin.com/*",
     "https://www.shixiseng.com/*",
-    "https://www.xiaoyoubang.com/*"
+    "https://www.xiaoyoubang.com/*",
+    "https://api.deepseek.com/*",
+    "https://api.openai.com/*",
+    "https://*/*"
   ],
   "action": {
     "default_title": "一键投递简历 — 点击打开/关闭面板"

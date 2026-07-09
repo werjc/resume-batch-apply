@@ -17,11 +17,15 @@ class ZhipinAdapter extends BaseAdapter {
   }
 
   isSearchPage() {
-    return window.location.pathname.includes('/web/geek/job') ||
-           window.location.pathname.includes('/web/geek/job-recommend') ||
-           window.location.pathname.includes('/c101') ||
-           document.querySelector('.search-job-result') !== null ||
-           document.querySelector('.job-list-box') !== null;
+    // BOSS直聘所有含岗位列表的页面
+    const path = window.location.pathname;
+    if (path.includes('/web/geek/job') || path.includes('/web/geek/job-recommend') || path.includes('/c101')) return true;
+    // 首页 /web/geek/ 或 /web/geek
+    if (path === '/web/geek/' || path === '/web/geek' || path === '/' || path === '/web/geek/index') return true;
+    // DOM 检测
+    if (document.querySelector('.search-job-result, .job-list-box, .job-card-wrapper, .recommend-job-list')) return true;
+    if (document.querySelector('[class*="job-card"], [class*="jobCard"]')) return true;
+    return false;
   }
 
   getJobElements() {
@@ -35,9 +39,10 @@ class ZhipinAdapter extends BaseAdapter {
       '[class*="jobCard"]:not([class*="list"])',
       '.job-list > li', '.job-list > div[class]',
       '.job-list-box > div[class]',
-      // --- 推荐页 ---
+      // --- 首页推荐 ---
       '.recommend-job-list > li', '.recommend-job-list > div[class]',
       '[class*="recommend"] > [class*="job"]',
+      '.geek-index > [class*="job"]', '.index-content [class*="job-card"]',
       // --- 通用 ---
       '.search-result > li', '.search-result > div[class]',
       '.result-list > li', '.result-list > div[class]',
@@ -69,6 +74,7 @@ class ZhipinAdapter extends BaseAdapter {
 
     // 详情页链接
     const url = this._extractJobUrl(element);
+    const companyUrl = this._extractCompanyUrl(element);
 
     // 薪资
     const salaryEl = element.querySelector('.salary, .red, [class*="salary"]');
@@ -92,6 +98,7 @@ class ZhipinAdapter extends BaseAdapter {
       title,
       company,
       url,
+      companyUrl,
       salary,
       location: tags.find(t => !t.includes('经验') && !t.includes('学历')) || '',
       date,
@@ -198,20 +205,6 @@ class ZhipinAdapter extends BaseAdapter {
 
   hasCaptcha() {
     return document.querySelector('.captcha, .geetest, .verify-code, [class*="captcha"], [class*="verify"]') !== null;
-  }
-
-  detectCompanyType(companyName, element) {
-    const el = element || document;
-    const tagEls = el.querySelectorAll('.company-tag, .tag-item');
-    for (const tag of tagEls) {
-      const text = tag.textContent;
-      if (/上市|A股|港股|美股|IPO/.test(text)) return 'listed';
-      if (/国企|央企|国有/.test(text)) return 'state';
-      if (/外资|外商|外企|欧美/.test(text)) return 'foreign';
-      if (/民营|私企/.test(text)) return 'private';
-      if (/天使轮|A轮|B轮|Pre-A|初创|创业|不需要融资|未融资/.test(text)) return 'startup';
-    }
-    return 'unknown';
   }
 
   _generateId(element) {

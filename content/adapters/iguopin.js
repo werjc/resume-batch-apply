@@ -46,6 +46,7 @@ class IguopinAdapter extends BaseAdapter {
   extractJobInfo(element) {
     const { title, company } = this._extractBoth(element);
     const url = this._extractJobUrl(element);
+    const companyUrl = this._extractCompanyUrl(element);
 
     const salaryEl = element.querySelector('[class*="salary"], [class*="pay"]');
     const salary = salaryEl ? salaryEl.textContent.trim() : '';
@@ -62,7 +63,7 @@ class IguopinAdapter extends BaseAdapter {
 
     return {
       id: 'ig_' + btoa(unescape(encodeURIComponent(title + company))).slice(0, 32),
-      title, company, url, salary, location, date,
+      title, company, url, companyUrl, salary, location, date,
       dateObj: this.parseDate(date),
       companyType: 'state',
       jobType: this._detectJobType(title, tags),

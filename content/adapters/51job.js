@@ -43,6 +43,7 @@ class Job51Adapter extends BaseAdapter {
   extractJobInfo(element) {
     const { title, company } = this._extractBoth(element);
     const url = this._extractJobUrl(element);
+    const companyUrl = this._extractCompanyUrl(element);
     const salaryEl = element.querySelector('.sal, .salary, [class*="salary"]');
     const dateEl = element.querySelector('.time, [class*="date"], [class*="time"], .t5');
     const locationEl = element.querySelector('[class*="area"], [class*="location"], .t3');
@@ -51,7 +52,7 @@ class Job51Adapter extends BaseAdapter {
 
     return {
       id: '51j_' + btoa(unescape(encodeURIComponent(title + company))).slice(0, 32),
-      title, company, url,
+      title, company, url, companyUrl,
       salary: salaryEl ? salaryEl.textContent.trim() : '',
       location: locationEl ? locationEl.textContent.trim() : '',
       date: dateEl ? dateEl.textContent.trim() : '',
@@ -82,19 +83,6 @@ class Job51Adapter extends BaseAdapter {
   checkLoginStatus() {
     const userEl = document.querySelector('.user-info, [class*="user"], .login-area');
     return { loggedIn: !!userEl, username: userEl ? '已登录' : '' };
-  }
-
-  detectCompanyType(companyName, element) {
-    const el = element || document;
-    const tags = el.querySelectorAll('[class*="tag"], [class*="type"]');
-    for (const tag of tags) {
-      const text = tag.textContent;
-      if (/上市/.test(text)) return 'listed';
-      if (/国企|央企|国有/.test(text)) return 'state';
-      if (/外资|外企/.test(text)) return 'foreign';
-      if (/民营/.test(text)) return 'private';
-    }
-    return 'unknown';
   }
 
   hasCaptcha() { return document.querySelector('[class*="captcha"], [class*="verify"], .yidun') !== null; }

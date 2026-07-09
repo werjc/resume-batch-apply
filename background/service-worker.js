@@ -264,13 +264,71 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     case 'getApplyState': {
-      getApplyState().then(state => {
-        sendResponse(state);
-      });
+      getApplyState().then(state => { sendResponse(state); });
+      return true;
+    }
+    case 'aiAnalyze': {
+      const { jobs, config } = message;
+      if (!config?.key || !jobs?.length) { sendResponse({ error: '缺少 API Key 或岗位数据' }); return; }
+      analyzeWithLLM(jobs, config).then(r => sendResponse(r)).catch(e => sendResponse({ error: e.message }));
       return true;
     }
   }
 });
+
+async function analyzeWithLLM(jobs, config) {
+  const endpoint = config.endpoint;
+  const model = config.model || 'deepseek-chat';
+  const key = config.key;
+  if (!endpoint || !key) return { error: '缺少 API 地址或 Key' };
+
+  const jobList = jobs.map(j => `ID:${j.id} | 岗位:"${j.title}" | 公司:"${j.company}"`).join('\n');
+  const prompt = `你是一个招聘信息审核专家。请分析以下招聘岗位，对每个岗位返回：(1)风险级别(high/medium/low)和风险原因，(2)根据公司名称推断公司类型(listed上市公司/state国企央企/foreign外企/private民营/startup创业公司)。
+
+返回纯JSON数组（不要markdown包裹）：
+[{"id":"岗位id","risk":{"level":"low/medium/high","score":0-100,"reasons":["原因"]},"companyType":"listed/state/foreign/private/startup"}]
+
+风险判断标准：
+- 高风险：日结、押金、培训费、刷单、代收代付、数字货币、高薪+无门槛
+- 中风险：岗位名模糊、公司信息缺失、薪资异常高、远程+高薪
+- 低风险：信息完整、知名企业、薪资合理
+
+公司类型判断：
+- 中字头/国字头/央企上市 → state
+- 知名上市公司(A股/港股/美股) → listed
+- 知名外企(英文名/外资) → foreign
+- 创业公司(天使轮/A轮) → startup
+- 其余有有限公司/科技等后缀 → private
+
+岗位列表：
+${jobList}`;
+
+  console.log('[AI分析] 开始请求:', endpoint, 'model:', model);
+  try {
+    const resp = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+      body: JSON.stringify({ model: model || 'deepseek-chat', messages: [{ role: 'user', content: prompt }], temperature: 0.1, max_tokens: 2000 })
+    });
+    console.log('[AI分析] 响应状态:', resp.status);
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => '');
+      console.error('[AI分析] API错误:', resp.status, errText.slice(0, 200));
+      return { error: `API 返回 ${resp.status}: ${errText.slice(0, 100)}` };
+    }
+    const data = await resp.json();
+    console.log('[AI分析] 响应数据:', JSON.stringify(data).slice(0, 200));
+    const content = data.choices?.[0]?.message?.content || '';
+    const jsonMatch = content.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) { console.error('[AI分析] 未找到JSON:', content.slice(0, 200)); return { error: 'AI 返回格式异常，未找到JSON' }; }
+    const results = JSON.parse(jsonMatch[0]);
+    console.log('[AI分析] 解析成功:', results.length, '条结果');
+    return { results: results.map((r, i) => ({ ...r, id: r.id || jobs[i]?.id })) };
+  } catch (e) {
+    console.error('[AI分析] 网络异常:', e.message, e);
+    return { error: '网络请求失败: ' + e.message };
+  }
+}
 
 // ========== 投递历史 ==========
 

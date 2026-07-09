@@ -57,6 +57,7 @@ class ZhaopinAdapter extends BaseAdapter {
   extractJobInfo(element) {
     const { title, company } = this._extractBoth(element);
     const url = this._extractJobUrl(element);
+    const companyUrl = this._extractCompanyUrl(element);
 
     const salaryEl = element.querySelector('.jobinfo__salary, .salary, [class*="salary"], .zwyx, .salaryText');
     const salary = salaryEl ? salaryEl.textContent.trim() : '';
@@ -79,6 +80,7 @@ class ZhaopinAdapter extends BaseAdapter {
       title,
       company,
       url,
+      companyUrl,
       salary,
       location,
       date,
@@ -145,20 +147,6 @@ class ZhaopinAdapter extends BaseAdapter {
 
   hasCaptcha() {
     return document.querySelector('.captcha, .yidun, .geetest, [class*="captcha"], [class*="verify"], .nc_wrapper') !== null;
-  }
-
-  detectCompanyType(companyName, element) {
-    const el = element || document;
-    const tagEls = el.querySelectorAll('[class*="tag"], [class*="type"]');
-    for (const tag of tagEls) {
-      const text = tag.textContent;
-      if (/上市|A股|港股|美股/.test(text)) return 'listed';
-      if (/国企|央企|国有|事业单位/.test(text)) return 'state';
-      if (/外资|外商|外企|合资/.test(text)) return 'foreign';
-      if (/民营|私企/.test(text)) return 'private';
-      if (/天使|A轮|B轮|Pre-A|初创|创业/.test(text)) return 'startup';
-    }
-    return 'unknown';
   }
 
   _sleep(ms) {
