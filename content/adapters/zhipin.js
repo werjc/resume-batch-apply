@@ -212,7 +212,7 @@ class ZhipinAdapter extends BaseAdapter {
     const { title, company } = this._extractBoth(element);
     const url = this._extractJobUrl(element);
     const raw = `${title}|${company}|${url}`;
-    return 'zp_' + btoa(unescape(encodeURIComponent(raw))).slice(0, 40);
+    return 'zp_' + this._utf8ToBase64(raw).slice(0, 40);
   }
 
   _findElementById(jobId) {

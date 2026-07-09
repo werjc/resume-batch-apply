@@ -62,7 +62,7 @@ class IguopinAdapter extends BaseAdapter {
       .filter(Boolean);
 
     return {
-      id: 'ig_' + btoa(unescape(encodeURIComponent(title + company))).slice(0, 32),
+      id: 'ig_' + this._utf8ToBase64(title + company).slice(0, 32),
       title, company, url, companyUrl, salary, location, date,
       dateObj: this.parseDate(date),
       companyType: 'state',

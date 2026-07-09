@@ -588,6 +588,7 @@ class BaseAdapter {
     const tags = (job.tags || []).join(' ').toLowerCase();
     const all = title + ' ' + company + ' ' + tags;
     const reasons = [];
+    const positives = [];
     let score = 0;
 
     // === 高危特征 ===
@@ -596,7 +597,7 @@ class BaseAdapter {
     if (/在家.*高薪|高薪.*在家|远程.*高薪/.test(all)) { score += 20; reasons.push('远程+高薪组合——常见骗局模式'); }
     if (/无需经验.*高薪|高薪.*无需经验|不限学历.*高薪/.test(all)) { score += 20; reasons.push('低门槛+高薪——不符合市场规律'); }
     if (/急聘.*大量|大量.*急聘|高薪.*急聘/.test(all)) { score += 15; reasons.push('高薪急聘——常见于虚假招聘'); }
-    if (/月入.*万|月薪.*万|年入.*百万/.test(all) && /实习|兼职|新手|入门/.test(all)) { score += 25; reasons.push('兼职/实习+月入过万——极可能是虚假信息'); }
+    if (/月入.*万|月薪.*万|年入.*百万/.test(title) && /实习|兼职|新手|入门/.test(title)) { score += 25; reasons.push('兼职/实习+月入过万——极可能是虚假信息'); }
     if (/网络.*兼职|兼职.*网络|打字.*员|刷单|刷客|点赞.*员/.test(all)) { score += 35; reasons.push('刷单/打字员——经典网络诈骗'); }
     if (/数字货币|虚拟货币|区块链.*兼职|挖矿/.test(all)) { score += 20; reasons.push('数字货币相关——高风险'); }
     if (/代购|代收|转账.*兼职|跑分/.test(all)) { score += 35; reasons.push('代购/跑分——可能涉及洗钱等违法活动'); }
@@ -608,14 +609,14 @@ class BaseAdapter {
     if (/不限学历/.test(all) && /\d+[kKwW万]/.test(all)) { score += 10; reasons.push('不限学历但薪资较高——需核实'); }
 
     // === 低危加分项（降低风险） ===
-    if (/上市公司|上市企业|a股|港股|美股|央企|国企/.test(all)) { score -= 15; reasons.push('知名企业/上市公司'); }
-    if (/中国500|世界500|行业龙头|独角兽/.test(all)) { score -= 10; }
+    if (/上市公司|上市企业|a股|港股|美股|央企|国企/.test(all)) { score -= 15; positives.push('知名企业/上市公司'); }
+    if (/中国500|世界500|行业龙头|独角兽/.test(all)) { score -= 10; positives.push('中国/世界500强'); }
 
     let level = 'low';
     if (score >= 25) level = 'high';
     else if (score >= 12) level = 'medium';
 
-    return { level, score: Math.max(0, score), reasons };
+    return { level, score: Math.max(0, score), reasons, positives };
   }
 
   /**
@@ -934,7 +935,8 @@ class BaseAdapter {
     // "研究生" 单独出现 → 硕士
     if (/研究生/.test(text) && !/博士|本科/.test(text)) return 'master';
 
-    // === 默认：中国大多数岗位要求本科 ===
+    // === 默认：中国大多数白领岗位要求本科 ===
+    // 注意：未检测到学历信息的岗位会被归为"本科"，可通过筛选器"学历不限"查看低门槛岗位
     return 'bachelor';
   }
 
@@ -1013,6 +1015,16 @@ class BaseAdapter {
     // === 第3层：排除法兜底 → 默认民营 ===
     // 中国注册企业 99%+ 是民营，未匹配到特殊类型的默认为民营
     return 'private';
+  }
+
+  /**
+   * UTF-8 安全的 base64 编码——替代废弃的 unescape(encodeURIComponent(...))
+   * @param {string} str
+   * @returns {string}
+   */
+  _utf8ToBase64(str) {
+    const bytes = new TextEncoder().encode(str);
+    return btoa(Array.from(bytes, b => String.fromCharCode(b)).join(''));
   }
 
   /**

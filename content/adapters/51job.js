@@ -51,7 +51,7 @@ class Job51Adapter extends BaseAdapter {
       .map(t => t.textContent.trim()).filter(Boolean);
 
     return {
-      id: '51j_' + btoa(unescape(encodeURIComponent(title + company))).slice(0, 32),
+      id: '51j_' + this._utf8ToBase64(title + company).slice(0, 32),
       title, company, url, companyUrl,
       salary: salaryEl ? salaryEl.textContent.trim() : '',
       location: locationEl ? locationEl.textContent.trim() : '',

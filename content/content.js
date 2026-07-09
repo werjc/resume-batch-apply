@@ -244,7 +244,7 @@
         <input type="checkbox" class="rba-cb" data-id="${esc(j.id)}" ${chk}>
         <div class="rba-jobinfo">
           <div class="rba-jobtitle ${hasUrl?'rba-link':''}" ${hasUrl?`data-url="${esc(j.url)}" title="点击在新标签页打开详情"`:''}>${esc(j.title)}${hasUrl?'<span class="rba-linkicon">↗</span>':''}${riskBadge}</div>
-          <div class="rba-jobcompany">${esc(j.company)}${j.salary?' · '+esc(j.salary):''}</div>
+          <div class="rba-jobcompany">${j.companyUrl ? `<a href="${j.companyUrl.replace(/"/g,'&quot;')}" target="_blank" class="rba-link" title="打开公司主页">${esc(j.company)}</a>` : esc(j.company)}${j.salary?' · '+esc(j.salary):''}</div>
           <div class="rba-jobmeta">${j.education&&j.education!=='none'?`<span>${eduLabel(j.education)}</span>`:''}${j.jobType?`<span>${jobTypeLabel(j.jobType)}</span>`:''}${j.date?`<span>${esc(j.date)}</span>`:''}${j.location?`<span>${esc(j.location)}</span>`:''}</div>
         </div>
       </div>`;
@@ -365,7 +365,9 @@
     }
     const finalModel = model || (provider === 'deepseek' ? 'deepseek-chat' : provider === 'openai' ? 'gpt-4o-mini' : 'deepseek-chat');
 
-    const sample = allJobs.slice(0, 10).map(j => ({ id: j.id, title: j.title, company: j.company, companyType: j.companyType }));
+    const MAX_AI_JOBS = 10;
+    if (allJobs.length > MAX_AI_JOBS) { toast(`岗位较多，AI 仅分析前 ${MAX_AI_JOBS} 个（共 ${allJobs.length} 个）`, 'info'); }
+    const sample = allJobs.slice(0, MAX_AI_JOBS).map(j => ({ id: j.id, title: j.title, company: j.company, companyType: j.companyType }));
     try {
       const resp = await chrome.runtime.sendMessage({ type: 'aiAnalyze', jobs: sample, config: { endpoint, model: finalModel, key } });
       if (!resp || resp.error) { st.textContent = resp?.error || '请求失败'; btn.disabled = false; return; }
@@ -405,7 +407,7 @@
         <div class="rba-filter-panel">
           <div class="rba-frow"><label>发布日期</label><select id="filterDate"><option value="all">不限</option><option value="1">24小时内</option><option value="3">3天内</option><option value="7">7天内</option><option value="14">14天内</option><option value="30">30天内</option></select></div>
           <div class="rba-frow"><label>公司类型</label><select id="filterCompanyType"><option value="all">不限</option><option value="listed">上市公司</option><option value="state">国企/央企</option><option value="foreign">外企</option><option value="private">民营企业</option><option value="startup">创业公司</option></select></div>
-          <div class="rba-frow"><label>学历要求</label><select id="filterEducation"><option value="all">不限</option><option value="associate">大专及以上</option><option value="bachelor">本科及以上</option><option value="master">硕士及以上</option><option value="doctor">博士</option></select></div>
+          <div class="rba-frow"><label>学历要求</label><select id="filterEducation"><option value="all">不限</option><option value="none">学历不限</option><option value="associate">大专及以上</option><option value="bachelor">本科及以上</option><option value="master">硕士及以上</option><option value="doctor">博士</option></select></div>
           <div class="rba-frow"><label>风险等级</label><select id="filterRisk"><option value="all">不限</option><option value="high">⚠ 高风险</option><option value="medium">⚡ 中风险</option><option value="low">✓ 低风险</option><option value="analyzing">🔄 分析中</option></select></div>
         </div>
       </div>

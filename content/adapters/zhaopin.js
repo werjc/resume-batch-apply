@@ -76,7 +76,7 @@ class ZhaopinAdapter extends BaseAdapter {
     const companyType = companyTypeEl ? companyTypeEl.textContent.trim() : '';
 
     return {
-      id: 'zl_' + btoa(unescape(encodeURIComponent(title + company))).slice(0, 32),
+      id: 'zl_' + this._utf8ToBase64(title + company).slice(0, 32),
       title,
       company,
       url,

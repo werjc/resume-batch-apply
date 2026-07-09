@@ -20,8 +20,7 @@
     "https://www.shixiseng.com/*",
     "https://www.xiaoyoubang.com/*",
     "https://api.deepseek.com/*",
-    "https://api.openai.com/*",
-    "https://*/*"
+    "https://api.openai.com/*"
   ],
   "action": {
     "default_title": "一键投递简历 — 点击打开/关闭面板"

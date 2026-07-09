@@ -48,7 +48,7 @@ class LiepinAdapter extends BaseAdapter {
       .map(t => t.textContent.trim()).filter(Boolean);
 
     return {
-      id: 'lp_' + btoa(unescape(encodeURIComponent(title + company))).slice(0, 32),
+      id: 'lp_' + this._utf8ToBase64(title + company).slice(0, 32),
       title, company, url, companyUrl,
       salary: salaryEl ? salaryEl.textContent.trim() : '',
       location: locationEl ? locationEl.textContent.trim() : '',
