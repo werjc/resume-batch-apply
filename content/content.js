@@ -76,7 +76,8 @@
       if (!stopRequested && done < total) await sleep(2000 + Math.random() * 2000);
     }
     isApplying = false;
-    chrome.runtime.sendMessage({ type: 'applyComplete', total, completed: done, successCount: results.filter(r => r.success).length, failCount: results.filter(r => !r.success).length, results }).catch(() => {});
+    const siteName = (ad && ad.name) || currentSiteName || '';
+    chrome.runtime.sendMessage({ type: 'applyComplete', total, completed: done, successCount: results.filter(r => r.success).length, failCount: results.filter(r => !r.success).length, results, siteName }).catch(() => {});
   }
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -107,11 +108,11 @@
   function togglePanel() {
     if (panelEl) {
       panelVisible = !panelVisible;
-      if (panelVisible) { panelEl.classList.remove('rba-collapsed'); setPageMargin(true); refreshPanelData(); }
-      else { panelEl.classList.add('rba-collapsed'); setPageMargin(false); }
+      if (panelVisible) { panelEl.classList.remove('rba-collapsed'); setPageMargin(true); refreshPanelData(); startSpaPoll(); }
+      else { panelEl.classList.add('rba-collapsed'); setPageMargin(false); stopSpaPoll(); }
     } else {
       createPanel(); panelVisible = true;
-      panelEl.classList.remove('rba-collapsed'); setPageMargin(true); refreshPanelData();
+      panelEl.classList.remove('rba-collapsed'); setPageMargin(true); refreshPanelData(); startSpaPoll();
     }
   }
 
@@ -166,6 +167,7 @@
     $('#aiEndpoint').addEventListener('input', saveAiConfig);
     $('#aiModel').addEventListener('input', saveAiConfig);
     $('#aiKey').addEventListener('input', saveAiConfig);
+    $('#aiResume').addEventListener('input', saveAiConfig);
     $('#btnAiAnalyze').addEventListener('click', runAiAnalysis);
 
     // 爬取
@@ -240,10 +242,18 @@
       else if (risk.level === 'medium') riskLabel = `⚡ 中风险${aiTag}`;
       else riskLabel = `✓ 低风险${aiTag}`;
       const riskBadge = `<span class="rba-risk rba-risk-${risk.level}" title="${esc((risk.reasons||[]).join('; ') || '未检测到风险')}">${riskLabel}</span>`;
+      let matchBadge = '';
+      if (j.matchScore !== undefined) {
+        const ms = j.matchScore;
+        const mTitle = esc((j.matchReasons||[]).join('; '));
+        if (ms >= 70) matchBadge = `<span class="rba-match rba-match-high" title="${mTitle}">🎯 ${ms}%</span>`;
+        else if (ms >= 40) matchBadge = `<span class="rba-match rba-match-mid" title="${mTitle}">🎯 ${ms}%</span>`;
+        else matchBadge = `<span class="rba-match rba-match-low" title="${mTitle}">🎯 ${ms}%</span>`;
+      }
       return `<div class="rba-jobitem" data-id="${esc(j.id)}">
         <input type="checkbox" class="rba-cb" data-id="${esc(j.id)}" ${chk}>
         <div class="rba-jobinfo">
-          <div class="rba-jobtitle ${hasUrl?'rba-link':''}" ${hasUrl?`data-url="${esc(j.url)}" title="点击在新标签页打开详情"`:''}>${esc(j.title)}${hasUrl?'<span class="rba-linkicon">↗</span>':''}${riskBadge}</div>
+          <div class="rba-jobtitle ${hasUrl?'rba-link':''}" ${hasUrl?`data-url="${esc(j.url)}" title="点击在新标签页打开详情"`:''}>${esc(j.title)}${hasUrl?'<span class="rba-linkicon">↗</span>':''}${riskBadge}${matchBadge}</div>
           <div class="rba-jobcompany">${j.companyUrl ? `<a href="${j.companyUrl.replace(/"/g,'&quot;')}" target="_blank" class="rba-link" title="打开公司主页">${esc(j.company)}</a>` : esc(j.company)}${j.salary?' · '+esc(j.salary):''}</div>
           <div class="rba-jobmeta">${j.education&&j.education!=='none'?`<span>${eduLabel(j.education)}</span>`:''}${j.jobType?`<span>${jobTypeLabel(j.jobType)}</span>`:''}${j.date?`<span>${esc(j.date)}</span>`:''}${j.location?`<span>${esc(j.location)}</span>`:''}</div>
         </div>
@@ -326,11 +336,11 @@
 
   // ===== AI 配置与执行 =====
   async function saveAiConfig() {
-    const d = { provider: panelEl.querySelector('#aiProvider').value, endpoint: panelEl.querySelector('#aiEndpoint').value, model: panelEl.querySelector('#aiModel').value, key: panelEl.querySelector('#aiKey').value };
+    const d = { provider: panelEl.querySelector('#aiProvider').value, endpoint: panelEl.querySelector('#aiEndpoint').value, model: panelEl.querySelector('#aiModel').value, key: panelEl.querySelector('#aiKey').value, resume: panelEl.querySelector('#aiResume').value };
     await chrome.storage.local.set({ aiConfig: d }).catch(() => {});
   }
   async function loadAiConfig() {
-    try { const r = await chrome.storage.local.get('aiConfig'); const d = r.aiConfig; if (!d) return; if (d.provider) panelEl.querySelector('#aiProvider').value = d.provider; if (d.endpoint) panelEl.querySelector('#aiEndpoint').value = d.endpoint; if (d.model) panelEl.querySelector('#aiModel').value = d.model; if (d.key) panelEl.querySelector('#aiKey').value = d.key; panelEl.querySelector('#aiEndpointRow').style.display = panelEl.querySelector('#aiProvider').value === 'custom' ? 'flex' : 'none'; } catch (e) {}
+    try { const r = await chrome.storage.local.get('aiConfig'); const d = r.aiConfig; if (!d) return; if (d.provider) panelEl.querySelector('#aiProvider').value = d.provider; if (d.endpoint) panelEl.querySelector('#aiEndpoint').value = d.endpoint; if (d.model) panelEl.querySelector('#aiModel').value = d.model; if (d.key) panelEl.querySelector('#aiKey').value = d.key; if (d.resume) panelEl.querySelector('#aiResume').value = d.resume; panelEl.querySelector('#aiEndpointRow').style.display = panelEl.querySelector('#aiProvider').value === 'custom' ? 'flex' : 'none'; } catch (e) {}
   }
 
   // 自动 AI（面板打开时触发，不阻塞 UI）
@@ -367,9 +377,10 @@
 
     const MAX_AI_JOBS = 10;
     if (allJobs.length > MAX_AI_JOBS) { toast(`岗位较多，AI 仅分析前 ${MAX_AI_JOBS} 个（共 ${allJobs.length} 个）`, 'info'); }
-    const sample = allJobs.slice(0, MAX_AI_JOBS).map(j => ({ id: j.id, title: j.title, company: j.company, companyType: j.companyType }));
+    const resumeText = panelEl.querySelector('#aiResume').value.trim();
+    const sample = allJobs.slice(0, MAX_AI_JOBS).map(j => ({ id: j.id, title: j.title, company: j.company, salary: j.salary, companyType: j.companyType }));
     try {
-      const resp = await chrome.runtime.sendMessage({ type: 'aiAnalyze', jobs: sample, config: { endpoint, model: finalModel, key } });
+      const resp = await chrome.runtime.sendMessage({ type: 'aiAnalyze', jobs: sample, config: { endpoint, model: finalModel, key }, resume: resumeText || undefined });
       if (!resp || resp.error) { st.textContent = resp?.error || '请求失败'; btn.disabled = false; return; }
       let updated = 0;
       for (const r of (resp.results || [])) {
@@ -377,6 +388,8 @@
         if (job) {
           if (r.risk) job.risk = { level: r.risk.level || 'low', score: r.risk.score || 0, reasons: r.risk.reasons || [], ai: true };
           if (r.companyType && r.companyType !== 'unknown') job.companyType = r.companyType;
+          if (r.matchScore !== undefined) job.matchScore = r.matchScore;
+          if (r.matchReasons) job.matchReasons = r.matchReasons;
           updated++;
         }
       }
@@ -420,6 +433,7 @@
           <div class="rba-frow" id="aiEndpointRow" style="display:none"><label>API 地址</label><input id="aiEndpoint" placeholder="https://api.openai.com/v1/chat/completions"></div>
           <div class="rba-frow"><label>模型名称</label><input id="aiModel" placeholder="deepseek-chat"></div>
           <div class="rba-frow"><label>API Key</label><input id="aiKey" type="password" placeholder="sk-..."></div>
+          <div class="rba-frow" style="flex-direction:column;align-items:stretch"><label style="margin-bottom:4px">📄 我的简历</label><textarea id="aiResume" rows="4" placeholder="粘贴简历文本，AI 将分析岗位与简历的匹配度（可选）" style="width:100%;padding:6px 8px;border:1px solid #d1d1d1;border-radius:4px;font-size:12px;resize:vertical;font-family:inherit"></textarea></div>
           <div class="rba-ai-actions">
             <button class="rba-btn-ai-analyze" id="btnAiAnalyze">🤖 AI 分析当前岗位</button>
             <span class="rba-ai-status" id="aiStatus"></span>
@@ -539,6 +553,11 @@
 .rba-risk-analyzing{background:#deecf9;color:#004578;border:1px solid #b3d4f0;animation:rba-pulse 1.5s infinite}
 @keyframes rba-pulse{0%,100%{opacity:1}50%{opacity:.5}}
 
+.rba-match{font-size:10px;padding:1px 6px;border-radius:2px;margin-left:4px;font-weight:600}
+.rba-match-high{background:#dff6dd;color:#1e5200}
+.rba-match-mid{background:#fff4ce;color:#8a6d14}
+.rba-match-low{background:#fde7e9;color:#c00}
+
 .rba-progress{padding:6px 0;flex-shrink:0;margin:0 12px}
 .rba-barwrap{height:4px;background:#e8e8e8;border-radius:2px;overflow:hidden}
 .rba-bar{height:100%;background:#0078D4;border-radius:2px;transition:width .3s}
@@ -586,7 +605,7 @@
 `;
 
   // ===== SPA 路由监听 =====
-  let lastUrl = window.location.href, urlCheckTimer = null;
+  let lastUrl = window.location.href, urlCheckTimer = null, spaPollTimer = null;
   function onUrlChange() {
     const now = window.location.href;
     if (now === lastUrl) return;
@@ -594,13 +613,14 @@
     clearTimeout(urlCheckTimer);
     urlCheckTimer = setTimeout(() => { if (panelVisible && panelEl) { refreshPanelData(); toast('页面已切换，岗位列表已刷新', 'info'); } }, 800);
   }
+  function startSpaPoll() { if (!spaPollTimer) spaPollTimer = setInterval(() => { if (window.location.href !== lastUrl) onUrlChange(); }, 1000); }
+  function stopSpaPoll() { clearInterval(spaPollTimer); spaPollTimer = null; }
   const _pushState = history.pushState;
   history.pushState = function (...args) { _pushState.apply(this, args); onUrlChange(); };
   const _replaceState = history.replaceState;
   history.replaceState = function (...args) { _replaceState.apply(this, args); onUrlChange(); };
   window.addEventListener('popstate', onUrlChange);
   window.addEventListener('hashchange', onUrlChange);
-  setInterval(() => { if (window.location.href !== lastUrl) onUrlChange(); }, 800);
 
   // ===== 初始加载 =====
   setTimeout(() => { const ad = getAdapter(); if (ad && ad.isSearchPage()) { chrome.runtime.sendMessage({ type: 'pageReady', siteName: ad.name, isSearchPage: true }).catch(() => {}); } }, 1000);

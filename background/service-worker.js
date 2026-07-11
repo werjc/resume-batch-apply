@@ -8,28 +8,22 @@
  * 4. chrome.storage 数据管理
  */
 
-// ========== 工具函数 ==========
+importScripts('../utils/storage.js');
 
-/**
- * 投递状态存储 key
- */
-const APPLY_STATE_KEY = 'applyState';
-const SCHEDULED_TASKS_KEY = 'scheduledTasks';
-const APPLY_HISTORY_KEY = 'applyHistory';
+// ========== 工具函数 ==========
 
 /**
  * 获取当前投递状态
  */
 async function getApplyState() {
-  const result = await chrome.storage.local.get(APPLY_STATE_KEY);
-  return result[APPLY_STATE_KEY] || { isApplying: false, current: 0, total: 0 };
+  return Storage.getApplyState();
 }
 
 /**
  * 保存投递状态
  */
 async function setApplyState(state) {
-  await chrome.storage.local.set({ [APPLY_STATE_KEY]: state });
+  return Storage.setApplyState(state);
 }
 
 // ========== 安装/启动 ==========
@@ -59,8 +53,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 
   try {
     // 获取任务信息
-    const result = await chrome.storage.local.get(SCHEDULED_TASKS_KEY);
-    const tasks = result[SCHEDULED_TASKS_KEY] || [];
+    const tasks = await Storage.getScheduledTasks();
     const task = tasks.find(t => t.id === alarm.name);
 
     if (!task) {
@@ -146,10 +139,7 @@ function waitForTabLoad(tabId) {
  * 从任务列表移除任务
  */
 async function removeTask(taskId) {
-  const result = await chrome.storage.local.get(SCHEDULED_TASKS_KEY);
-  const tasks = result[SCHEDULED_TASKS_KEY] || [];
-  const filtered = tasks.filter(t => t.id !== taskId);
-  await chrome.storage.local.set({ [SCHEDULED_TASKS_KEY]: filtered });
+  await Storage.removeScheduledTask(taskId);
   await chrome.alarms.clear(taskId).catch(() => {});
 }
 
@@ -157,8 +147,7 @@ async function removeTask(taskId) {
  * 清理过期任务
  */
 async function cleanExpiredTasks() {
-  const result = await chrome.storage.local.get(SCHEDULED_TASKS_KEY);
-  const tasks = result[SCHEDULED_TASKS_KEY] || [];
+  const tasks = await Storage.getScheduledTasks();
   const now = Date.now();
 
   const valid = [];
@@ -166,14 +155,13 @@ async function cleanExpiredTasks() {
     if (new Date(task.scheduledTime).getTime() > now) {
       valid.push(task);
     } else {
-      // 清理对应的 alarm
       await chrome.alarms.clear(task.id).catch(() => {});
       console.log('[一键投递] 清理过期任务:', task.id);
     }
   }
 
   if (valid.length !== tasks.length) {
-    await chrome.storage.local.set({ [SCHEDULED_TASKS_KEY]: valid });
+    await Storage.set(STORAGE_KEYS.SCHEDULED_TASKS, valid);
   }
 }
 
@@ -220,20 +208,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const { jobs, scheduledTime, siteUrl, siteName } = message;
       const taskId = 'task_' + Date.now().toString(36);
 
-      // 保存任务
-      chrome.storage.local.get(SCHEDULED_TASKS_KEY).then(result => {
-        const tasks = result[SCHEDULED_TASKS_KEY] || [];
-        tasks.push({
-          id: taskId,
-          jobs,
-          scheduledTime,
-          siteUrl,
-          siteName,
-          createdAt: new Date().toISOString()
-        });
-        return chrome.storage.local.set({ [SCHEDULED_TASKS_KEY]: tasks });
+      Storage.addScheduledTask({
+        id: taskId, jobs, scheduledTime, siteUrl, siteName
       }).then(() => {
-        // 创建 alarm（延迟到指定时间）
         const delayMinutes = Math.max(1, Math.ceil(
           (new Date(scheduledTime).getTime() - Date.now()) / 60000
         ));
@@ -243,7 +220,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }).catch(err => {
         sendResponse({ success: false, error: err.message });
       });
-      return true; // 异步响应
+      return true;
     }
 
     case 'cancelSchedule': {
@@ -257,8 +234,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     case 'getScheduledTasks': {
-      chrome.storage.local.get(SCHEDULED_TASKS_KEY).then(result => {
-        sendResponse({ tasks: result[SCHEDULED_TASKS_KEY] || [] });
+      Storage.getScheduledTasks().then(tasks => {
+        sendResponse({ tasks });
+      });
+      return true;
+    }
+
+    case 'getApplyHistory': {
+      Storage.get(STORAGE_KEYS.APPLY_HISTORY, []).then(history => {
+        sendResponse({ history });
       });
       return true;
     }
@@ -268,25 +252,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return true;
     }
     case 'aiAnalyze': {
-      const { jobs, config } = message;
+      const { jobs, config, resume } = message;
       if (!config?.key || !jobs?.length) { sendResponse({ error: '缺少 API Key 或岗位数据' }); return; }
-      analyzeWithLLM(jobs, config).then(r => sendResponse(r)).catch(e => sendResponse({ error: e.message }));
+      analyzeWithLLM(jobs, config, resume).then(r => sendResponse(r)).catch(e => sendResponse({ error: e.message }));
       return true;
     }
   }
 });
 
-async function analyzeWithLLM(jobs, config) {
+async function analyzeWithLLM(jobs, config, resume) {
   const endpoint = config.endpoint;
   const model = config.model || 'deepseek-chat';
   const key = config.key;
   if (!endpoint || !key) return { error: '缺少 API 地址或 Key' };
 
-  const jobList = jobs.map(j => `ID:${j.id} | 岗位:"${j.title}" | 公司:"${j.company}"`).join('\n');
-  const prompt = `你是一个招聘信息审核专家。请分析以下招聘岗位，对每个岗位返回：(1)风险级别(high/medium/low)和风险原因，(2)根据公司名称推断公司类型(listed上市公司/state国企央企/foreign外企/private民营/startup创业公司)。
+  const jobList = jobs.map(j => `ID:${j.id} | 岗位:"${j.title}" | 公司:"${j.company}" | 薪资:"${j.salary||'未知'}"`).join('\n');
+  const resumeSection = resume ? `\n候选人简历：\n${resume}\n请额外对每个岗位评估：简历与岗位的匹配度(matchScore:0-100)和匹配理由(matchReasons)。` : '';
+  const matchOutput = resume ? ',"matchScore":0-100,"matchReasons":["理由"]' : '';
+
+  const prompt = `你是一个招聘信息审核专家。请分析以下招聘岗位，对每个岗位返回：(1)风险级别(high/medium/low)和风险原因，(2)根据公司名称推断公司类型(listed上市公司/state国企央企/foreign外企/private民营/startup创业公司)${resume ? '，(3)简历匹配度和匹配理由' : ''}。
 
 返回纯JSON数组（不要markdown包裹）：
-[{"id":"岗位id","risk":{"level":"low/medium/high","score":0-100,"reasons":["原因"]},"companyType":"listed/state/foreign/private/startup"}]
+[{"id":"岗位id","risk":{"level":"low/medium/high","score":0-100,"reasons":["原因"]},"companyType":"listed/state/foreign/private/startup"${matchOutput}}]
 
 风险判断标准：
 - 高风险：日结、押金、培训费、刷单、代收代付、数字货币、高薪+无门槛
@@ -294,22 +281,25 @@ async function analyzeWithLLM(jobs, config) {
 - 低风险：信息完整、知名企业、薪资合理
 
 公司类型判断：
-- 中字头/国字头/央企上市 → state
-- 知名上市公司(A股/港股/美股) → listed
-- 知名外企(英文名/外资) → foreign
-- 创业公司(天使轮/A轮) → startup
+- 中字头/国字头/央企上市 → state / 知名上市公司(A股/港股/美股) → listed
+- 知名外企(英文名/外资) → foreign / 创业公司(天使轮/A轮) → startup
 - 其余有有限公司/科技等后缀 → private
+${resume ? '\n简历匹配标准：\n- 匹配度综合评估：技能相关性(40%)、经验匹配(30%)、行业匹配(20%)、职位层级(10%)\n- matchScore: 0-39=低匹配, 40-69=中等匹配, 70-100=高匹配\n- matchReasons: 2-3条简洁理由，说明匹配或不匹配的关键因素' : ''}
 
 岗位列表：
-${jobList}`;
+${jobList}${resumeSection}`;
 
   console.log('[AI分析] 开始请求:', endpoint, 'model:', model);
   try {
+    const ctrl = new AbortController();
+    const timeout = setTimeout(() => ctrl.abort(), 30000);
     const resp = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
-      body: JSON.stringify({ model: model || 'deepseek-chat', messages: [{ role: 'user', content: prompt }], temperature: 0.1, max_tokens: 2000 })
+      body: JSON.stringify({ model: model || 'deepseek-chat', messages: [{ role: 'user', content: prompt }], temperature: 0.1, max_tokens: resume ? 4000 : 2000 }),
+      signal: ctrl.signal
     });
+    clearTimeout(timeout);
     console.log('[AI分析] 响应状态:', resp.status);
     if (!resp.ok) {
       const errText = await resp.text().catch(() => '');
@@ -333,18 +323,17 @@ ${jobList}`;
 // ========== 投递历史 ==========
 
 async function addToHistory(result) {
-  const res = await chrome.storage.local.get(APPLY_HISTORY_KEY);
-  const history = res[APPLY_HISTORY_KEY] || [];
+  const history = await Storage.get(STORAGE_KEYS.APPLY_HISTORY, []);
   history.unshift({
     time: new Date().toISOString(),
+    siteName: result.siteName || '',
     total: result.total,
     successCount: result.successCount,
     failCount: result.failCount,
-    results: (result.results || []).slice(0, 20) // 只保留前20条详情
+    results: (result.results || []).slice(0, 20)
   });
-  // 只保留最近 100 条
   if (history.length > 100) history.length = 100;
-  await chrome.storage.local.set({ [APPLY_HISTORY_KEY]: history });
+  await Storage.set(STORAGE_KEYS.APPLY_HISTORY, history);
 }
 
 // ========== 通知点击 ==========

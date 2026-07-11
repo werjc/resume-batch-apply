@@ -1,6 +1,6 @@
 # 一键批量投递简历 — Chrome 浏览器扩展
 
-[![Version](https://img.shields.io/badge/version-2.4.1-blue)](manifest.json)
+[![Version](https://img.shields.io/badge/version-2.6.0-blue)](manifest.json)
 [![Manifest](https://img.shields.io/badge/manifest-v3-green)](manifest.json)
 [![License](https://img.shields.io/badge/license-MIT-orange)](LICENSE)
 

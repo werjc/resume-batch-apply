@@ -2,6 +2,17 @@
  * chrome.storage 封装工具
  * 用于持久化存储投递记录、定时任务、用户偏好等数据
  */
+
+// ========== Storage Key 常量（全项目统一） ==========
+const STORAGE_KEYS = {
+  APPLY_STATE: 'applyState',
+  SCHEDULED_TASKS: 'scheduledTasks',
+  APPLY_HISTORY: 'applyHistory',
+  AI_CONFIG: 'aiConfig',
+  POPUP_FILTERS: 'popupFilters',
+  RESUME: 'resumeText'
+};
+
 const Storage = {
   /**
    * 保存数据

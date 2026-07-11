@@ -55,7 +55,27 @@ const dom = {
   progressContainer: $('#progressContainer'),
   progressBar: $('#progressBar'),
   progressText: $('#progressText'),
-  toast: $('#toast')
+  toast: $('#toast'),
+  // 统计
+  tabJobs: $('#tabJobs'),
+  tabStats: $('#tabStats'),
+  statsPanel: $('#statsPanel'),
+  jobListSection: $('.job-list-section'),
+  statTotal: $('#statTotal'),
+  statSuccess: $('#statSuccess'),
+  statFail: $('#statFail'),
+  statRate: $('#statRate'),
+  statSiteBreakdown: $('#statSiteBreakdown'),
+  btnExportCsv: $('#btnExportCsv'),
+  // AI 分析
+  aiToggle: $('#aiToggle'),
+  aiPanel: $('#aiPanel'),
+  aiProvider: $('#aiProvider'),
+  aiModel: $('#aiModel'),
+  aiKey: $('#aiKey'),
+  aiResume: $('#aiResume'),
+  btnAiAnalyze: $('#btnAiAnalyze'),
+  aiStatus: $('#aiStatus')
 };
 
 // ========== 初始化 ==========
@@ -80,8 +100,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   dom.siteName.textContent = currentSiteName;
 
-  // 加载记忆的筛选条件
-  await loadFilters();
+  // 加载记忆的筛选条件和 AI 配置
+  await Promise.all([loadFilters(), loadAiConfig()]);
 
   // 加载数据
   await Promise.all([checkStatus(), loadJobs(), loadApplyState()]);
@@ -235,6 +255,23 @@ function renderJobList() {
     const typeLabel = getJobTypeLabel(job.jobType);
     const educationLabel = getEducationLabel(job.education);
     const hasUrl = job.url && job.url !== '';
+    const risk = job.risk;
+    let riskBadge = '';
+    if (risk) {
+      const aiTag = risk.ai ? '·AI' : '';
+      if (risk.level === 'analyzing') riskBadge = '<span class="risk-badge risk-analyzing">🔄 分析中</span>';
+      else if (risk.level === 'high') riskBadge = `<span class="risk-badge risk-high" title="${escapeHtml((risk.reasons||[]).join('; '))}">⚠ 高风险${aiTag}</span>`;
+      else if (risk.level === 'medium') riskBadge = `<span class="risk-badge risk-medium" title="${escapeHtml((risk.reasons||[]).join('; '))}">⚡ 中风险${aiTag}</span>`;
+      else if (risk.level === 'low') riskBadge = `<span class="risk-badge risk-low">✓ 低风险${aiTag}</span>`;
+    }
+    let matchBadge = '';
+    if (job.matchScore !== undefined) {
+      const ms = job.matchScore;
+      const mTitle = escapeHtml((job.matchReasons||[]).join('; '));
+      if (ms >= 70) matchBadge = `<span class="risk-badge risk-low" title="${mTitle}">🎯 ${ms}%匹配</span>`;
+      else if (ms >= 40) matchBadge = `<span class="risk-badge risk-medium" title="${mTitle}">🎯 ${ms}%匹配</span>`;
+      else matchBadge = `<span class="risk-badge risk-high" title="${mTitle}">🎯 ${ms}%匹配</span>`;
+    }
 
     return `
       <div class="job-item" data-id="${escapeHtml(job.id)}">
@@ -244,6 +281,7 @@ function renderJobList() {
                ${hasUrl ? `data-url="${escapeHtml(job.url)}" title="点击跳转到详情页"` : ''}>
             ${escapeHtml(job.title)}
             ${hasUrl ? '<span class="link-icon">↗</span>' : ''}
+            ${riskBadge}${matchBadge}
           </div>
           <div class="job-company">${escapeHtml(job.company)}${salaryDisplay}</div>
           <div class="job-meta">
@@ -419,6 +457,28 @@ function bindEvents() {
     showToast('已刷新岗位列表', 'info');
   });
   dom.btnStopCrawl.addEventListener('click', stopCrawl);
+
+  // AI 分析折叠
+  dom.aiToggle.addEventListener('click', () => {
+    dom.aiToggle.classList.toggle('collapsed');
+    dom.aiPanel.classList.toggle('collapsed');
+  });
+
+  // AI 配置变更记忆
+  dom.aiProvider.addEventListener('change', saveAiConfig);
+  dom.aiModel.addEventListener('input', saveAiConfig);
+  dom.aiKey.addEventListener('input', saveAiConfig);
+  dom.aiResume.addEventListener('input', saveAiConfig);
+
+  // AI 分析按钮
+  dom.btnAiAnalyze.addEventListener('click', runAiAnalysis);
+
+  // Tab 切换
+  dom.tabJobs.addEventListener('click', () => switchTab('jobs'));
+  dom.tabStats.addEventListener('click', () => switchTab('stats'));
+
+  // CSV 导出
+  dom.btnExportCsv.addEventListener('click', exportCsv);
 
   // 监听后台消息（进度更新 + 爬取进度）
   chrome.runtime.onMessage.addListener(handleBackgroundMessage);
@@ -703,4 +763,151 @@ function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str;
   return div.innerHTML;
+}
+
+// ========== Tab 切换 ==========
+
+let activeTab = 'jobs';
+
+function switchTab(tab) {
+  activeTab = tab;
+  dom.tabJobs.classList.toggle('tab-active', tab === 'jobs');
+  dom.tabStats.classList.toggle('tab-active', tab === 'stats');
+  dom.jobListSection.classList.toggle('hidden', tab !== 'jobs');
+  dom.statsPanel.classList.toggle('hidden', tab !== 'stats');
+  document.querySelectorAll('.crawl-toolbar, .filter-section').forEach(el => {
+    el.classList.toggle('hidden', tab !== 'jobs');
+  });
+  if (tab === 'stats') loadStats();
+}
+
+// ========== 统计仪表盘 ==========
+
+async function loadStats() {
+  try {
+    const resp = await chrome.runtime.sendMessage({ type: 'getApplyHistory' });
+    const history = resp?.history || [];
+    const total = history.reduce((s, r) => s + (r.total || 0), 0);
+    const success = history.reduce((s, r) => s + (r.successCount || 0), 0);
+    const fail = history.reduce((s, r) => s + (r.failCount || 0), 0);
+    const rate = total > 0 ? Math.round((success / total) * 100) : 0;
+
+    dom.statTotal.textContent = total;
+    dom.statSuccess.textContent = success;
+    dom.statFail.textContent = fail;
+    dom.statRate.textContent = rate + '%';
+
+    // 站点统计
+    const sites = {};
+    for (const h of history) {
+      for (const r of (h.results || [])) {
+        const site = r.siteName || '未知';
+        if (!sites[site]) sites[site] = { total: 0, success: 0 };
+        sites[site].total++;
+        if (r.success) sites[site].success++;
+      }
+    }
+    const siteList = Object.entries(sites).sort((a, b) => b[1].total - a[1].total).slice(0, 5);
+    dom.statSiteBreakdown.innerHTML = siteList.length
+      ? siteList.map(([name, s]) =>
+          `<div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid #f0f0f0">` +
+          `<span>${escapeHtml(name)}</span><span>${s.total}投 · ${s.success}成</span></div>`
+        ).join('')
+      : '<div style="text-align:center">暂无记录</div>';
+  } catch (e) { /* ignore */ }
+}
+
+// ========== CSV 导出 ==========
+
+async function exportCsv() {
+  try {
+    const resp = await chrome.runtime.sendMessage({ type: 'getApplyHistory' });
+    const history = resp?.history || [];
+    if (!history.length) return showToast('没有可导出的记录', 'info');
+
+    const rows = [['时间', '站点', '总投递', '成功', '失败']];
+    for (const h of history) {
+      rows.push([h.time, h.siteName || '', h.total || 0, h.successCount || 0, h.failCount || 0]);
+    }
+    const csv = '﻿' + rows.map(r => r.map(c => '"' + String(c).replace(/"/g, '""') + '"').join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `投递记录_${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('导出成功', 'success');
+  } catch (e) { showToast('导出失败', 'error'); }
+}
+
+// ========== AI 分析 ==========
+
+const AI_CONFIG_KEY = 'aiConfig';
+
+async function saveAiConfig() {
+  const data = {
+    provider: dom.aiProvider.value,
+    model: dom.aiModel.value.trim(),
+    key: dom.aiKey.value.trim(),
+    resume: dom.aiResume.value.trim()
+  };
+  try { await chrome.storage.local.set({ [AI_CONFIG_KEY]: data }); } catch (e) { /* ignore */ }
+}
+
+async function loadAiConfig() {
+  try {
+    const r = await chrome.storage.local.get(AI_CONFIG_KEY);
+    const d = r[AI_CONFIG_KEY];
+    if (!d) return;
+    if (d.provider) dom.aiProvider.value = d.provider;
+    if (d.model) dom.aiModel.value = d.model;
+    if (d.key) dom.aiKey.value = d.key;
+    if (d.resume) dom.aiResume.value = d.resume;
+  } catch (e) { /* ignore */ }
+}
+
+async function runAiAnalysis() {
+  const key = dom.aiKey.value.trim();
+  if (!key) return showToast('请先填入 API Key', 'info');
+  if (!allJobs.length) return showToast('没有岗位数据', 'info');
+
+  const provider = dom.aiProvider.value;
+  const model = dom.aiModel.value.trim() || (provider === 'deepseek' ? 'deepseek-chat' : 'gpt-4o-mini');
+  const endpoint = provider === 'deepseek' ? 'https://api.deepseek.com/chat/completions'
+    : provider === 'openai' ? 'https://api.openai.com/v1/chat/completions' : '';
+
+  dom.btnAiAnalyze.disabled = true;
+  dom.aiStatus.textContent = '分析中...';
+
+  // 最多分析 10 个
+  const MAX_AI = 10;
+  if (allJobs.length > MAX_AI) showToast(`岗位较多，仅分析前 ${MAX_AI} 个（共 ${allJobs.length} 个）`, 'info');
+  const resumeText = dom.aiResume.value.trim();
+  const sample = allJobs.slice(0, MAX_AI).map(j => ({ id: j.id, title: j.title, company: j.company, salary: j.salary, companyType: j.companyType }));
+
+  try {
+    const resp = await chrome.runtime.sendMessage({
+      type: 'aiAnalyze', jobs: sample, config: { endpoint, model, key }, resume: resumeText || undefined
+    });
+    if (!resp || resp.error) {
+      dom.aiStatus.textContent = resp?.error || '请求失败';
+    } else {
+      let updated = 0;
+      for (const r of (resp.results || [])) {
+        const job = allJobs.find(j => j.id === r.id);
+        if (job) {
+          if (r.risk) job.risk = r.risk;
+          if (r.companyType && r.companyType !== 'unknown') job.companyType = r.companyType;
+          if (r.matchScore !== undefined) { job.matchScore = r.matchScore; job.matchReasons = r.matchReasons; }
+          updated++;
+        }
+      }
+      applyFilters();
+      dom.aiStatus.textContent = `完成，更新 ${updated} 个岗位`;
+      showToast(`AI 分析完成：更新了 ${updated} 个岗位`, 'success');
+    }
+  } catch (e) {
+    dom.aiStatus.textContent = '请求失败: ' + e.message;
+  }
+  dom.btnAiAnalyze.disabled = false;
 }

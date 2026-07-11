@@ -504,7 +504,7 @@ class BaseAdapter {
     const allJobs = [];
     const seen = new Set();
     const startTime = Date.now();
-    const MAX_TIME = 20000; // 硬超时 20 秒
+    const MAX_TIME = Math.max(20000, maxPages * 8000); // 每页最多 8s，最少 20s
 
     // 首页 —— 解析当前 DOM
     const p1 = this._getAllPossibleCards(document);

@@ -81,6 +81,37 @@
       </div>
     </section>
 
+    <!-- AI 分析（可折叠） -->
+    <section class="filter-section">
+      <div id="aiToggle" class="filter-header collapsed">
+        <span class="filter-arrow">▼</span>
+        <span>🤖 AI 分析岗位风险</span>
+      </div>
+      <div id="aiPanel" class="filter-panel collapsed">
+        <div class="filter-row">
+          <label for="aiProvider">API：</label>
+          <select id="aiProvider">
+            <option value="deepseek">DeepSeek</option>
+            <option value="openai">OpenAI</option>
+          </select>
+        </div>
+        <div class="filter-row">
+          <label for="aiModel">模型：</label>
+          <input id="aiModel" placeholder="deepseek-chat" class="text-input">
+        </div>
+        <div class="filter-row">
+          <label for="aiKey">Key：</label>
+          <input id="aiKey" type="password" placeholder="sk-..." class="text-input">
+        </div>
+        <div class="filter-row" style="flex-direction:column;align-items:stretch">
+          <label style="margin-bottom:3px">📄 我的简历（可选）</label>
+          <textarea id="aiResume" rows="3" placeholder="粘贴简历，AI 将评估匹配度" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:11px;resize:vertical;font-family:inherit;outline:none"></textarea>
+        </div>
+        <button id="btnAiAnalyze" class="btn btn-accent btn-sm" style="width:100%;margin-top:8px">🤖 分析当前岗位</button>
+        <div id="aiStatus" style="font-size:11px;color:var(--text-secondary);margin-top:4px"></div>
+      </div>
+    </section>
+
     <!-- 深度爬取工具栏 -->
     <section class="crawl-toolbar">
       <div class="crawl-row">
@@ -100,6 +131,12 @@
       </div>
     </section>
 
+    <!-- 视图切换 Tab -->
+    <section class="tab-bar">
+      <button id="tabJobs" class="tab-btn tab-active">📋 岗位列表</button>
+      <button id="tabStats" class="tab-btn">📊 投递统计</button>
+    </section>
+
     <!-- 岗位列表 -->
     <section class="job-list-section">
       <div class="job-list-header">
@@ -111,6 +148,20 @@
       </div>
       <div id="jobList" class="job-list">
         <div class="job-list-empty">请打开招聘网站搜索结果页</div>
+      </div>
+    </section>
+
+    <!-- 统计仪表盘 -->
+    <section id="statsPanel" class="stats-panel hidden">
+      <div class="stats-grid">
+        <div class="stat-card"><div class="stat-num" id="statTotal">0</div><div class="stat-label">总投递</div></div>
+        <div class="stat-card"><div class="stat-num stat-ok" id="statSuccess">0</div><div class="stat-label">成功</div></div>
+        <div class="stat-card"><div class="stat-num stat-err" id="statFail">0</div><div class="stat-label">失败</div></div>
+        <div class="stat-card"><div class="stat-num" id="statRate">0%</div><div class="stat-label">成功率</div></div>
+      </div>
+      <div id="statSiteBreakdown" style="font-size:11px;color:var(--text-secondary);margin-top:8px;max-height:80px;overflow-y:auto"></div>
+      <div style="margin-top:8px;display:flex;gap:6px">
+        <button id="btnExportCsv" class="btn btn-outline btn-sm" style="flex:1">📥 导出 CSV</button>
       </div>
     </section>
 
@@ -157,8 +208,6 @@
     <div id="toast" class="toast hidden"></div>
   </div>
 
-  <script src="../utils/storage.js"></script>
-  <script src="../utils/scheduler.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>
