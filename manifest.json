@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "一键批量投递简历",
-  "version": "3.1.0",
+  "version": "3.1.1",
   "description": "在各大招聘网站一键批量投递简历，支持定时投递和条件筛选",
   "permissions": [
     "storage",
