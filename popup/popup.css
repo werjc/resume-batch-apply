@@ -144,6 +144,8 @@ body {
   background: var(--bg-white);
   outline: none;
 }
+.pdf-btn { background: none; border: 1px solid var(--border); border-radius: 3px; font-size: 10px; cursor: pointer; padding: 1px 5px; margin-left: 4px; color: var(--text-secondary); vertical-align: middle; }
+.pdf-btn:hover { background: var(--bg); color: var(--text); }
 
 .job-list-section {
   background: var(--bg-white);
@@ -285,43 +287,6 @@ body {
 .btn-text { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 12px; padding: 0; }
 .btn-text:hover { color: var(--primary-dark); text-decoration: underline; }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
-
-/* --- 爬取工具栏 --- */
-.crawl-toolbar {
-  background: var(--bg-white);
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--border);
-}
-
-.crawl-row {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-}
-
-.crawl-page-select {
-  flex: 1;
-  padding: 5px 6px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  font-size: 11px;
-  color: var(--text);
-  background: var(--bg-white);
-  cursor: pointer;
-  outline: none;
-}
-
-.crawl-progress {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 6px;
-  padding: 4px 0;
-  font-size: 11px;
-  color: var(--accent);
-}
-
-.crawl-progress.hidden { display: none; }
 
 .modal {
   position: fixed; top: 0; left: 0; right: 0; bottom: 0;

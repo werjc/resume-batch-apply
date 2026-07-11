@@ -104,30 +104,11 @@
           <input id="aiKey" type="password" placeholder="sk-..." class="text-input">
         </div>
         <div class="filter-row" style="flex-direction:column;align-items:stretch">
-          <label style="margin-bottom:3px">📄 我的简历（可选）</label>
-          <textarea id="aiResume" rows="3" placeholder="粘贴简历，AI 将评估匹配度" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:11px;resize:vertical;font-family:inherit;outline:none"></textarea>
+          <label style="margin-bottom:3px">📄 我的简历（可选）<input type="file" id="aiPdfInput" accept=".pdf" style="display:none"><button class="pdf-btn" id="btnPdfUpload" title="上传PDF">📎</button></label>
+          <textarea id="aiResume" rows="3" placeholder="粘贴简历或点📎上传PDF" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:11px;resize:vertical;font-family:inherit;outline:none"></textarea>
         </div>
         <button id="btnAiAnalyze" class="btn btn-accent btn-sm" style="width:100%;margin-top:8px">🤖 分析当前岗位</button>
         <div id="aiStatus" style="font-size:11px;color:var(--text-secondary);margin-top:4px"></div>
-      </div>
-    </section>
-
-    <!-- 深度爬取工具栏 -->
-    <section class="crawl-toolbar">
-      <div class="crawl-row">
-        <select id="crawlPages" class="crawl-page-select">
-          <option value="1">仅当前页</option>
-          <option value="3">爬取 3 页</option>
-          <option value="5" selected>爬取 5 页</option>
-          <option value="10">爬取 10 页</option>
-          <option value="20">爬取 20 页</option>
-        </select>
-        <button id="btnCrawl" class="btn btn-accent btn-sm">🔍 深度爬取</button>
-        <button id="btnRefresh" class="btn btn-outline btn-sm">🔄 刷新</button>
-      </div>
-      <div id="crawlProgress" class="crawl-progress hidden">
-        <span id="crawlProgressText">正在爬取第 1/5 页...</span>
-        <button id="btnStopCrawl" class="btn-text">⏹ 停止</button>
       </div>
     </section>
 

@@ -8,9 +8,9 @@
   let isApplying = false, stopRequested = false, applyQueue = [];
   let panelVisible = false;
   let allJobs = [], filteredJobs = [], selectedIds = new Set();
-  let pendingCrawlJobs = null; // 投递中收到的爬取结果暂存
   let currentSiteName = '';
   let jobElementMap = new Map();
+  let seenJobIds = new Set(); // 瀑布流去重
 
   function getAdapter() { return window.__siteAdapter || null; }
 
@@ -47,13 +47,6 @@
         chrome.runtime.sendMessage({ type: 'applyStopped', remaining: applyQueue.length }).catch(() => {});
         return;
       }
-      case 'stopCrawl': { crawlStopSignal.stopped = true; sendResp({ success: true }); return; }
-      case 'crawlPages': {
-        if (!ad) return sendResp({ success: false, error: '不受支持' });
-        sendResp({ success: true });
-        crawlAllPagesAsync(ad, Math.min(req.maxPages || 5, 50));
-        return;
-      }
     }
     return true;
   });
@@ -81,26 +74,7 @@
   }
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-  // ===== 多页爬取 =====
-  let crawlStopSignal = { stopped: false };
-  async function crawlAllPagesAsync(ad, maxPages) {
-    crawlStopSignal = { stopped: false };
-    try {
-      const all = await ad.crawlAllPages(window.location.href, maxPages, (cur, tot) => {
-        chrome.runtime.sendMessage({ type: 'crawlProgress', currentPage: cur, totalPages: tot }).catch(() => {});
-      }, crawlStopSignal);
-      const stopped = crawlStopSignal.stopped;
-      chrome.runtime.sendMessage({ type: 'crawlComplete', stopped, totalJobs: all.length, jobs: stopped ? [] : all.map(j => ({
-        id: j.id, title: j.title, company: j.company, url: j.url || '', companyUrl: j.companyUrl || '',
-        salary: j.salary, location: j.location, date: j.date, companyType: j.companyType,
-        jobType: j.jobType, education: j.education || 'none', risk: j.risk || { level: 'low', score: 0, reasons: [] }, tags: j.tags
-      })) }).catch(() => {});
-    } catch (e) {
-      chrome.runtime.sendMessage({ type: 'crawlComplete', stopped: false, totalJobs: 0, error: e.message, jobs: [] }).catch(() => {});
-    }
-  }
-
-  // ============================================================
+  // ===== 瀑布流监听 ====
   //  侧边栏面板
   // ============================================================
   let panelEl = null;
@@ -109,7 +83,7 @@
     if (panelEl) {
       panelVisible = !panelVisible;
       if (panelVisible) { panelEl.classList.remove('rba-collapsed'); setPageMargin(true); refreshPanelData(); startSpaPoll(); }
-      else { panelEl.classList.add('rba-collapsed'); setPageMargin(false); stopSpaPoll(); }
+      else { panelEl.classList.add('rba-collapsed'); setPageMargin(false); stopSpaPoll(); stopWaterfallWatch(); }
     } else {
       createPanel(); panelVisible = true;
       panelEl.classList.remove('rba-collapsed'); setPageMargin(true); refreshPanelData(); startSpaPoll();
@@ -168,12 +142,11 @@
     $('#aiModel').addEventListener('input', saveAiConfig);
     $('#aiKey').addEventListener('input', saveAiConfig);
     $('#aiResume').addEventListener('input', saveAiConfig);
+    $('#btnPdfUpload').addEventListener('click', () => $('#aiPdfInput').click());
+    $('#aiPdfInput').addEventListener('change', handlePdfUpload);
     $('#btnAiAnalyze').addEventListener('click', runAiAnalysis);
 
-    // 爬取
-    $('.rba-btn-crawl').addEventListener('click', startCrawl);
     $('.rba-btn-refresh').addEventListener('click', refreshPanelData);
-    $('.rba-btn-stopcrawl').addEventListener('click', () => { crawlStopSignal.stopped = true; toast('正在停止爬取...', 'info'); });
     // 投递
     $('.rba-btn-apply').addEventListener('click', startApply);
     $('.rba-btn-schedule').addEventListener('click', openSchedule);
@@ -198,16 +171,54 @@
     await loadAiConfig();
     try {
       jobElementMap.clear();
+      seenJobIds.clear();
       const raw = ad.parseSearchResults();
       allJobs = raw.map(j => {
         if (j.element) jobElementMap.set(j.id, j.element);
+        seenJobIds.add(j.id);
         const risk = ad._assessJobRisk ? ad._assessJobRisk(j) : { level: 'low', score: 0, reasons: [] };
         return { id: j.id, title: j.title, company: j.company, url: j.url || '', companyUrl: j.companyUrl || '', salary: j.salary, location: j.location, date: j.date, companyType: j.companyType, jobType: j.jobType, education: j.education || 'none', risk, tags: j.tags };
       });
-    } catch (e) { allJobs = []; jobElementMap.clear(); }
+    } catch (e) { allJobs = []; jobElementMap.clear(); seenJobIds.clear(); }
     selectedIds.clear(); applyFilters();
-    // 自动触发 AI 分析
     autoAiAnalyze();
+    startWaterfallWatch();
+  }
+
+  // ===== 瀑布流监听 =====
+  let waterfallObserver = null;
+  let waterfallDebounce = null;
+
+  function startWaterfallWatch() {
+    stopWaterfallWatch();
+    waterfallObserver = new MutationObserver(() => {
+      clearTimeout(waterfallDebounce);
+      waterfallDebounce = setTimeout(syncNewJobs, 600);
+    });
+    waterfallObserver.observe(document.body, { childList: true, subtree: true });
+  }
+
+  function stopWaterfallWatch() {
+    if (waterfallObserver) { waterfallObserver.disconnect(); waterfallObserver = null; }
+    clearTimeout(waterfallDebounce);
+  }
+
+  function syncNewJobs() {
+    const ad = getAdapter();
+    if (!ad) return;
+    try {
+      const raw = ad.parseSearchResults();
+      let added = 0;
+      for (const j of raw) {
+        if (seenJobIds.has(j.id)) continue;
+        seenJobIds.add(j.id);
+        if (j.element) jobElementMap.set(j.id, j.element);
+        const risk = ad._assessJobRisk ? ad._assessJobRisk(j) : { level: 'low', score: 0, reasons: [] };
+        allJobs.push({ id: j.id, title: j.title, company: j.company, url: j.url || '', companyUrl: j.companyUrl || '', salary: j.salary, location: j.location, date: j.date, companyType: j.companyType, jobType: j.jobType, education: j.education || 'none', risk, tags: j.tags });
+        added++;
+      }
+      if (added > 0) applyFilters();
+    } catch (e) { /* ignore */ }
   }
 
   // ===== 筛选 =====
@@ -218,7 +229,7 @@
     const rf = panelEl.querySelector('#filterRisk').value;
     filteredJobs = allJobs.filter(job => {
       if (df !== 'all' && job.dateObj) { const days = (Date.now() - job.dateObj.getTime()) / 86400000; if (days > parseInt(df)) return false; }
-      if (cf !== 'all' && job.companyType !== cf) return false;
+      if (cf !== 'all' && job.companyType !== cf && job.companyType !== 'unknown') return false;
       if (ef !== 'all') { const lv = { none: 0, associate: 1, bachelor: 2, master: 3, doctor: 4 }; if ((lv[job.education] || 0) > (lv[ef] || 0)) return false; }
       if (rf !== 'all') { const jr = (job.risk && job.risk.level) || 'low'; if (jr !== rf) return false; }
       return true;
@@ -290,21 +301,6 @@
     toast('已停止投递', 'info');
   }
 
-  async function startCrawl() {
-    const max = parseInt(panelEl.querySelector('#crawlPages').value) || 5;
-    const ad = getAdapter();
-    if (!ad) return toast('当前网站不受支持', 'error');
-    freezeUI(true);
-    panelEl.querySelector('.rba-btn-crawl').disabled = true; panelEl.querySelector('.rba-btn-crawl').textContent = '爬取中...';
-    panelEl.querySelector('.rba-crawlprogress').classList.remove('hidden'); panelEl.querySelector('.rba-btn-stopcrawl').classList.remove('hidden');
-    crawlAllPagesAsync(ad, Math.min(max, 50));
-  }
-  function resetCrawlUI() { freezeUI(false); const b = panelEl.querySelector('.rba-btn-crawl'); b.disabled = false; b.textContent = '深度爬取'; panelEl.querySelector('.rba-crawlprogress').classList.add('hidden'); panelEl.querySelector('.rba-btn-stopcrawl').classList.add('hidden'); }
-  function freezeUI(on) {
-    const sel = panelEl.querySelectorAll('select, .rba-btn-apply, .rba-btn-schedule, .rba-btn-refresh, .rba-btn-selectall, .rba-btn-invert');
-    sel.forEach(el => { el.disabled = on; el.style.opacity = on ? '0.4' : ''; });
-  }
-
   // ===== 定时 =====
   function openSchedule() {
     if (!selectedIds.size) return toast('请先勾选岗位', 'info');
@@ -325,10 +321,8 @@
   function handleBgMsg(msg) {
     switch (msg.type) {
       case 'applyProgress': updateProgress(msg.current, msg.total); break;
-      case 'applyComplete': isApplying = false; updateApplyUI(false); updateProgress(msg.total, msg.total); toast(`投递完成！成功 ${msg.successCount}，失败 ${msg.failCount}`, msg.failCount ? 'info' : 'success'); if (pendingCrawlJobs) { allJobs = pendingCrawlJobs; pendingCrawlJobs = null; selectedIds.clear(); applyFilters(); toast(`已加载暂存结果：${allJobs.length} 个岗位`, 'success'); } break;
+      case 'applyComplete': isApplying = false; updateApplyUI(false); updateProgress(msg.total, msg.total); toast(`投递完成！成功 ${msg.successCount}，失败 ${msg.failCount}`, msg.failCount ? 'info' : 'success'); break;
       case 'applyStopped': isApplying = false; updateApplyUI(false); break;
-      case 'crawlProgress': panelEl.querySelector('.rba-crawltext').textContent = `爬取第 ${msg.currentPage}/${msg.totalPages} 页...`; break;
-      case 'crawlComplete': resetCrawlUI(); if (msg.stopped) { toast('爬取已停止', 'info'); return; } if (msg.error) { toast('出错：'+msg.error, 'error'); return; } if (isApplying) { pendingCrawlJobs = msg.jobs; toast('投递进行中，结果已暂存', 'info'); return; } allJobs = msg.jobs || []; selectedIds.clear(); applyFilters(); toast(`深度爬取完成！共 ${allJobs.length} 个岗位`, 'success'); break;
     }
   }
   function updateProgress(cur, tot) { if (!tot) { panelEl.querySelector('.rba-progress').classList.add('hidden'); return; } panelEl.querySelector('.rba-progress').classList.remove('hidden'); panelEl.querySelector('.rba-bar').style.width = Math.round(cur/tot*100)+'%'; panelEl.querySelector('.rba-progresstext').textContent = `${cur}/${tot}`; }
@@ -349,10 +343,10 @@
       const r = await chrome.storage.local.get('aiConfig');
       const cfg = r.aiConfig;
       if (!cfg || !cfg.key || !allJobs.length) return;
-      // 标记所有岗位为"分析中"
-      allJobs.forEach(j => { j.risk = { level: 'analyzing', score: 0, reasons: ['AI分析中...'], ai: true }; });
+      // 只标记前 MAX_AI_JOBS 为分析中（与 runAiAnalysis 一致）
+      const MAX_AI = 10;
+      allJobs.slice(0, MAX_AI).forEach(j => { j.risk = { level: 'analyzing', score: 0, reasons: ['AI分析中...'], ai: true }; });
       applyFilters();
-      // 直接调 runAiAnalysis
       await runAiAnalysis();
     } catch (e) { /* 静默 */ }
   }
@@ -409,6 +403,48 @@
   function eduLabel(e) { return { none: '学历不限', associate: '大专', bachelor: '本科', master: '硕士', doctor: '博士' }[e] || ''; }
   function fmtTime(s) { const d = new Date(s); const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; }
   function esc(s) { if (!s) return ''; const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+  function handlePdfUpload(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    toast('正在提取 PDF 文本...', 'info');
+    const reader = new FileReader();
+    reader.onload = function() {
+      try {
+        const arr = new Uint8Array(reader.result);
+        let text = '';
+        const str = String.fromCharCode.apply(null, arr);
+        // 提取 BT...ET 文本块（PDF文本对象）
+        const blocks = str.match(/BT[\s\S]*?ET/gi);
+        if (blocks) {
+          for (const block of blocks) {
+            const matches = block.match(/\(([^)]*)\)/g);
+            if (matches) {
+              for (const m of matches) {
+                text += m.slice(1, -1);
+              }
+              text += '\n';
+            }
+          }
+        }
+        // 兜底：提取所有可读文本
+        if (!text.trim()) {
+          text = str.replace(/[^\x20-\x7E一-鿿　-〿＀-￯\n\r]/g, ' ')
+            .replace(/\s{2,}/g, '\n').trim();
+        }
+        if (text.trim().length > 10) {
+          $('#aiResume').value = text.trim().slice(0, 8000);
+          saveAiConfig();
+          toast('PDF 文本已提取 (' + text.trim().length + ' 字符)', 'success');
+        } else {
+          toast('未能提取到文本，请尝试复制粘贴', 'error');
+        }
+      } catch (err) {
+        toast('PDF 解析失败，请复制粘贴', 'error');
+      }
+    };
+    reader.readAsArrayBuffer(file);
+    e.target.value = '';
+  }
 
   // ============================================================
   const PANEL_HTML = `
@@ -433,7 +469,7 @@
           <div class="rba-frow" id="aiEndpointRow" style="display:none"><label>API 地址</label><input id="aiEndpoint" placeholder="https://api.openai.com/v1/chat/completions"></div>
           <div class="rba-frow"><label>模型名称</label><input id="aiModel" placeholder="deepseek-chat"></div>
           <div class="rba-frow"><label>API Key</label><input id="aiKey" type="password" placeholder="sk-..."></div>
-          <div class="rba-frow" style="flex-direction:column;align-items:stretch"><label style="margin-bottom:4px">📄 我的简历</label><textarea id="aiResume" rows="4" placeholder="粘贴简历文本，AI 将分析岗位与简历的匹配度（可选）" style="width:100%;padding:6px 8px;border:1px solid #d1d1d1;border-radius:4px;font-size:12px;resize:vertical;font-family:inherit"></textarea></div>
+          <div class="rba-frow" style="flex-direction:column;align-items:stretch"><label style="margin-bottom:4px">📄 我的简历 <input type="file" id="aiPdfInput" accept=".pdf" style="display:none"><button class="rba-pdf-btn" id="btnPdfUpload" title="上传PDF简历自动提取文本">📎 PDF</button></label><textarea id="aiResume" rows="4" placeholder="粘贴简历文本或点📎上传PDF，AI 将分析匹配度（可选）" style="width:100%;padding:6px 8px;border:1px solid #d1d1d1;border-radius:4px;font-size:12px;resize:vertical;font-family:inherit"></textarea></div>
           <div class="rba-ai-actions">
             <button class="rba-btn-ai-analyze" id="btnAiAnalyze">🤖 AI 分析当前岗位</button>
             <span class="rba-ai-status" id="aiStatus"></span>
@@ -441,16 +477,8 @@
         </div>
       </div>
     </div>
-    <div class="rba-crawl-wrap">
-      <div class="rba-crawltool">
-        <select id="crawlPages"><option value="1">仅当前页</option><option value="3">爬取 3 页</option><option value="5" selected>爬取 5 页</option><option value="10">爬取 10 页</option><option value="20">爬取 20 页</option></select>
-        <button class="rba-btn-crawl">深度爬取</button>
-        <button class="rba-btn-refresh">刷新</button>
-        <div class="rba-crawlprogress hidden"><span class="rba-crawltext">爬取第 1/5 页...</span><button class="rba-btn-stopcrawl hidden">停止</button></div>
-      </div>
-    </div>
     <div class="rba-list-wrap">
-      <div class="rba-listheader"><span class="rba-jobcount">0 个岗位</span><div><button class="rba-btn-selectall">全选</button><button class="rba-btn-invert">反选</button></div></div>
+      <div class="rba-listheader"><span class="rba-jobcount">0 个岗位</span><div><button class="rba-btn-selectall">全选</button><button class="rba-btn-invert">反选</button><button class="rba-btn-refresh">刷新</button></div></div>
       <div class="rba-joblist"><div class="rba-empty">打开招聘网站搜索结果页</div></div>
     </div>
     <div class="rba-progress hidden"><div class="rba-barwrap"><div class="rba-bar" style="width:0%"></div></div><div class="rba-progresstext">0/0</div></div>
@@ -494,8 +522,9 @@
 .rba-btn-ai-analyze:hover:not(:disabled){background:#106ebe}
 .rba-btn-ai-analyze:disabled{background:#ccc;cursor:not-allowed}
 .rba-ai-status{font-size:11px;color:#616161}
+.rba-pdf-btn{background:none;border:1px solid #d1d1d1;border-radius:3px;font-size:10px;cursor:pointer;padding:1px 6px;margin-left:4px;color:#616161}
+.rba-pdf-btn:hover{background:#f0f0f0;color:#1a1a1a}
 
-.rba-crawl-wrap{flex-shrink:0;z-index:2;background:#fafafa;padding:8px 16px 4px}
 .rba-actions-wrap{flex-shrink:0;z-index:2;background:#fafafa;padding:12px 16px;border-top:1px solid #e8e8e8}
 
 .rba-filter-section{background:#fff;border:1px solid #e8e8e8;border-radius:8px;overflow:hidden}
@@ -510,19 +539,9 @@
 .rba-frow select{flex:1;padding:6px 8px;border:1px solid #d1d1d1;border-radius:4px;font-size:12px;color:#1a1a1a;outline:none;background:#fff;cursor:pointer}
 .rba-frow select:focus{border-color:#0078D4;box-shadow:0 0 0 1px #0078D4}
 
-.rba-crawltool{padding:6px 0;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
-.rba-crawltool select{padding:6px 8px;border:1px solid #d1d1d1;border-radius:4px;font-size:12px;outline:none;cursor:pointer;background:#fff}
-.rba-crawltool select:focus{border-color:#0078D4}
-.rba-crawltool button{padding:6px 12px;border-radius:4px;font-size:12px;cursor:pointer;border:none;font-weight:500;white-space:nowrap}
-.rba-btn-crawl{background:#0078D4;color:#fff}
-.rba-btn-crawl:hover:not(:disabled){background:#106ebe}
-.rba-btn-crawl:disabled{opacity:.5;cursor:not-allowed;background:#ccc}
 .rba-btn-refresh{background:#fff;color:#1a1a1a;border:1px solid #d1d1d1!important}
 .rba-btn-refresh:hover{background:#f5f5f5}
-.rba-crawlprogress{width:100%;display:flex;justify-content:space-between;align-items:center;font-size:11px;color:#0078D4;margin-top:4px}
-.rba-btn-stopcrawl{background:none!important;border:none!important;color:#c00;cursor:pointer;font-size:11px;padding:0!important}
-.rba-btn-stopcrawl:hover{text-decoration:underline}
-.rba-crawlprogress.hidden,.rba-progress.hidden,.rba-modal.hidden,.rba-toast.hidden,.rba-collapsed .rba-body{display:none!important}
+.rba-progress.hidden,.rba-modal.hidden,.rba-toast.hidden,.rba-collapsed .rba-body{display:none!important}
 
 .rba-list-wrap{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;margin:0 16px}
 .rba-listheader{display:flex;justify-content:space-between;align-items:center;padding:6px 0;font-size:12px;color:#616161;flex-shrink:0}

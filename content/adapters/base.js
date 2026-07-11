@@ -396,186 +396,6 @@ class BaseAdapter {
     return [];
   }
 
-  // ========== 多页爬取支持 ==========
-
-  /**
-   * 通过 fetch 获取指定 URL 的 HTML，解析出岗位列表
-   * @param {string} url
-   * @returns {Promise<Array<Object>>}
-   */
-  async _fetchAndParsePage(url) {
-    try {
-      const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 8000);
-      const resp = await fetch(url, { credentials: 'include', signal: ctrl.signal });
-      clearTimeout(t);
-      if (!resp.ok) return [];
-      const html = await resp.text();
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(html, 'text/html');
-
-      // 用通用探测器找到卡片
-      const cards = this._getAllPossibleCards(doc);
-      if (cards.length === 0) return [];
-
-      return cards.map(el => {
-        const info = this.extractJobInfo(el);
-        // 确保 id 是纯数据（不带 DOM 引用）
-        delete info.element;
-        return info;
-      });
-    } catch (e) {
-      console.warn('[BaseAdapter] fetch 页面失败:', url, e.message);
-      return [];
-    }
-  }
-
-  /**
-   * 智能获取所有页面的 URL
-   * 优先用适配器的 getNextPageUrl，否则猜常见分页模式
-   * @param {string} baseUrl 当前页 URL
-   * @param {number} maxPages 最多页数
-   * @returns {string[]}
-   */
-  _generatePageUrls(baseUrl, maxPages) {
-    const urls = [baseUrl];
-
-    // 先试适配器提供的方法
-    if (typeof this.getNextPageUrl === 'function') {
-      let currentUrl = baseUrl;
-      for (let i = 1; i < maxPages; i++) {
-        const nextUrl = this.getNextPageUrl(currentUrl, i + 1);
-        if (!nextUrl || urls.includes(nextUrl)) break;
-        urls.push(nextUrl);
-        currentUrl = nextUrl;
-      }
-      if (urls.length > 1) return urls;
-    }
-
-    // 猜测分页模式
-    const parsed = new URL(baseUrl);
-
-    // 模式1: ?page=N 或 &page=N
-    const pageParam = parsed.searchParams.get('page') || parsed.searchParams.get('p') || parsed.searchParams.get('pn') || parsed.searchParams.get('pageNum') || parsed.searchParams.get('pageNo');
-    if (pageParam !== null) {
-      const basePage = parseInt(pageParam) || 1;
-      for (let i = basePage + 1; i <= basePage + maxPages - 1; i++) {
-        const u = new URL(baseUrl);
-        for (const key of ['page', 'p', 'pn', 'pageNum', 'pageNo']) {
-          if (u.searchParams.has(key)) { u.searchParams.set(key, String(i)); break; }
-        }
-        urls.push(u.toString());
-      }
-      return urls;
-    }
-
-    // 模式2: /list/N 或 /search/N/
-    const pathMatch = baseUrl.match(/^(.*\/)(\d+)(\/?)$/);
-    if (pathMatch) {
-      const basePage = parseInt(pathMatch[2]) || 1;
-      for (let i = basePage + 1; i <= basePage + maxPages - 1; i++) {
-        urls.push(pathMatch[1] + i + pathMatch[3]);
-      }
-      return urls;
-    }
-
-    // 模式3: start=N (用于 offset 分页)
-    const startParam = parsed.searchParams.get('start') || parsed.searchParams.get('offset');
-    if (startParam !== null) {
-      const step = parseInt(startParam) || 20;
-      const baseStart = parseInt(startParam) || 0;
-      for (let i = 1; i < maxPages; i++) {
-        const u = new URL(baseUrl);
-        for (const key of ['start', 'offset']) {
-          if (u.searchParams.has(key)) { u.searchParams.set(key, String(baseStart + i * step)); break; }
-        }
-        urls.push(u.toString());
-      }
-      return urls;
-    }
-
-    return urls;
-  }
-
-  /**
-   * 多页爬取——URL拼接为主，硬超时保护
-   */
-  async crawlAllPages(baseUrl, maxPages, onProgress, stopSignal) {
-    const allJobs = [];
-    const seen = new Set();
-    const startTime = Date.now();
-    const MAX_TIME = Math.max(20000, maxPages * 8000); // 每页最多 8s，最少 20s
-
-    // 首页 —— 解析当前 DOM
-    const p1 = this._getAllPossibleCards(document);
-    for (const el of p1) {
-      if (stopSignal && stopSignal.stopped) break;
-      const info = this.extractJobInfo(el);
-      if (!seen.has(info.id)) { seen.add(info.id); delete info.element; allJobs.push(info); }
-    }
-    if (onProgress) onProgress(1, maxPages);
-    if (stopSignal && stopSignal.stopped) { allJobs.forEach(j => { j.risk = this._assessJobRisk(j); }); return allJobs; }
-
-    // 生成多页 URL
-    const urls = this._generatePageUrls(baseUrl, maxPages);
-    if (urls.length <= 1) {
-      // 没有分页URL → 用DOM找翻页按钮，直接点击
-      await this._crawlByClicking(maxPages, allJobs, seen, onProgress, stopSignal, startTime, MAX_TIME);
-    } else {
-      // 有分页URL → fetch
-      const remaining = urls.slice(1);
-      for (let i = 0; i < remaining.length && Date.now() - startTime < MAX_TIME; i++) {
-        if (stopSignal && stopSignal.stopped) break;
-        const jobs = await this._fetchAndParsePage(remaining[i]);
-        for (const job of jobs) { if (!seen.has(job.id)) { seen.add(job.id); allJobs.push(job); } }
-        if (onProgress) onProgress(i + 2, urls.length);
-      }
-    }
-
-    allJobs.forEach(j => { j.risk = this._assessJobRisk(j); });
-    return allJobs;
-  }
-
-  /** 点击翻页 */
-  async _crawlByClicking(maxPages, allJobs, seen, onProgress, stopSignal, startTime, MAX_TIME) {
-    for (let page = 2; page <= maxPages && Date.now() - startTime < MAX_TIME; page++) {
-      if (stopSignal && stopSignal.stopped) break;
-
-      const nextBtn = this._findNextPageButton();
-      if (!nextBtn) break;
-
-      nextBtn.scrollIntoView({ block: 'center' });
-      await new Promise(r => setTimeout(r, 200));
-      nextBtn.click();
-      await new Promise(r => setTimeout(r, 1500));
-
-      let newCards = 0;
-      for (let r = 0; r < 4; r++) {
-        if (stopSignal && stopSignal.stopped || Date.now() - startTime > MAX_TIME) break;
-        await new Promise(r => setTimeout(r, 400));
-        const cards = this._getAllPossibleCards(document);
-        for (const el of cards) {
-          if (stopSignal && stopSignal.stopped) break;
-          const info = this.extractJobInfo(el);
-          if (!seen.has(info.id)) { seen.add(info.id); delete info.element; allJobs.push(info); newCards++; }
-        }
-        if (newCards > 0) break;
-      }
-      if (onProgress) onProgress(page, maxPages);
-      if (newCards === 0) break;
-    }
-  }
-
-  _findNextPageButton() {
-    const all = document.querySelectorAll('a, button, span[role="button"], li[class*="next"]');
-    for (const el of all) {
-      if (!el.offsetParent || el.disabled || el.classList.contains('disabled')) continue;
-      const t = el.textContent.trim().toLowerCase();
-      if (/^[>⟩›»]$/.test(t) || t === '下一页' || t === '下页' || t === 'next') return el;
-    }
-    return null;
-  }
-
   // ========== 岗位风险分析 ==========
 
   /**
@@ -935,9 +755,8 @@ class BaseAdapter {
     // "研究生" 单独出现 → 硕士
     if (/研究生/.test(text) && !/博士|本科/.test(text)) return 'master';
 
-    // === 默认：中国大多数白领岗位要求本科 ===
-    // 注意：未检测到学历信息的岗位会被归为"本科"，可通过筛选器"学历不限"查看低门槛岗位
-    return 'bachelor';
+    // === 默认：未检测到学历信息时归为"学历不限" ===
+    return 'none';
   }
 
   /**
@@ -1012,9 +831,9 @@ class BaseAdapter {
 
     // ▸ 创业公司（从公司名无法判断，但标签已覆盖）
 
-    // === 第3层：排除法兜底 → 默认民营 ===
-    // 中国注册企业 99%+ 是民营，未匹配到特殊类型的默认为民营
-    return 'private';
+    // === 第3层：排除法兜底 → 标记为未知（不武断归类） ===
+    // AI 分析后可自动填充正确的公司类型
+    return 'unknown';
   }
 
   /**

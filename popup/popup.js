@@ -34,12 +34,7 @@ const dom = {
   filterCompanyType: $('#filterCompanyType'),
   filterJobType: $('#filterJobType'),
   filterEducation: $('#filterEducation'),
-  crawlPages: $('#crawlPages'),
-  btnCrawl: $('#btnCrawl'),
   btnRefresh: $('#btnRefresh'),
-  crawlProgress: $('#crawlProgress'),
-  crawlProgressText: $('#crawlProgressText'),
-  btnStopCrawl: $('#btnStopCrawl'),
   jobCount: $('#jobCount'),
   jobList: $('#jobList'),
   btnSelectAll: $('#btnSelectAll'),
@@ -74,6 +69,8 @@ const dom = {
   aiModel: $('#aiModel'),
   aiKey: $('#aiKey'),
   aiResume: $('#aiResume'),
+  aiPdfInput: $('#aiPdfInput'),
+  btnPdfUpload: $('#btnPdfUpload'),
   btnAiAnalyze: $('#btnAiAnalyze'),
   aiStatus: $('#aiStatus')
 };
@@ -215,7 +212,7 @@ function applyFilters() {
 
     // 公司类型筛选
     if (companyTypeFilter !== 'all') {
-      if (job.companyType !== companyTypeFilter) return false;
+      if (job.companyType !== companyTypeFilter && job.companyType !== 'unknown') return false;
     }
 
     // 岗位类型筛选
@@ -450,13 +447,10 @@ function bindEvents() {
   // 停止投递
   dom.btnStop.addEventListener('click', stopApply);
 
-  // 深度爬取
-  dom.btnCrawl.addEventListener('click', startCrawl);
   dom.btnRefresh.addEventListener('click', async () => {
     await loadJobs();
     showToast('已刷新岗位列表', 'info');
   });
-  dom.btnStopCrawl.addEventListener('click', stopCrawl);
 
   // AI 分析折叠
   dom.aiToggle.addEventListener('click', () => {
@@ -469,6 +463,8 @@ function bindEvents() {
   dom.aiModel.addEventListener('input', saveAiConfig);
   dom.aiKey.addEventListener('input', saveAiConfig);
   dom.aiResume.addEventListener('input', saveAiConfig);
+  dom.btnPdfUpload.addEventListener('click', () => dom.aiPdfInput.click());
+  dom.aiPdfInput.addEventListener('change', handlePdfUpload);
 
   // AI 分析按钮
   dom.btnAiAnalyze.addEventListener('click', runAiAnalysis);
@@ -528,52 +524,6 @@ async function stopApply() {
   } catch (e) {
     showToast('停止失败，请刷新页面', 'error');
   }
-}
-
-// ========== 深度爬取 ==========
-
-let isCrawling = false;
-
-async function startCrawl() {
-  if (isCrawling) return;
-
-  const maxPages = parseInt(dom.crawlPages.value) || 5;
-  isCrawling = true;
-
-  dom.btnCrawl.disabled = true;
-  dom.btnCrawl.textContent = '爬取中...';
-  dom.crawlProgress.classList.remove('hidden');
-  dom.crawlProgressText.textContent = `正在爬取第 1/${maxPages} 页...`;
-  dom.btnStopCrawl.classList.remove('hidden');
-  dom.jobList.innerHTML = '<div class="job-list-empty">正在深度爬取岗位...</div>';
-
-  try {
-    await chrome.tabs.sendMessage(currentTabId, {
-      action: 'crawlPages',
-      maxPages: maxPages
-    });
-  } catch (e) {
-    isCrawling = false;
-    resetCrawlUI();
-    showToast('爬取失败：' + e.message, 'error');
-  }
-}
-
-async function stopCrawl() {
-  try {
-    await chrome.tabs.sendMessage(currentTabId, { action: 'stopCrawl' });
-    showToast('正在停止爬取...', 'info');
-  } catch (e) {
-    // ignore
-  }
-}
-
-function resetCrawlUI() {
-  isCrawling = false;
-  dom.btnCrawl.disabled = false;
-  dom.btnCrawl.textContent = '🔍 深度爬取';
-  dom.crawlProgress.classList.add('hidden');
-  dom.btnStopCrawl.classList.add('hidden');
 }
 
 // ========== 定时投递 ==========
@@ -672,23 +622,6 @@ function handleBackgroundMessage(message) {
       updateUIForApplying(false);
       break;
 
-    case 'crawlProgress':
-      dom.crawlProgressText.textContent = `正在爬取第 ${message.currentPage}/${message.totalPages} 页...`;
-      break;
-
-    case 'crawlComplete':
-      resetCrawlUI();
-      if (message.stopped) {
-        showToast('爬取已停止', 'info');
-      } else if (message.error) {
-        showToast('爬取出错：' + message.error, 'error');
-      } else {
-        allJobs = message.jobs || [];
-        selectedIds.clear();
-        applyFilters();
-        showToast(`深度爬取完成！共 ${allJobs.length} 个岗位`, 'success');
-      }
-      break;
   }
 }
 
@@ -763,6 +696,42 @@ function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str;
   return div.innerHTML;
+}
+
+function handlePdfUpload(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  showToast('正在提取 PDF 文本...', 'info');
+  const reader = new FileReader();
+  reader.onload = function() {
+    try {
+      const arr = new Uint8Array(reader.result);
+      let text = '';
+      const str = String.fromCharCode.apply(null, arr);
+      const blocks = str.match(/BT[\s\S]*?ET/gi);
+      if (blocks) {
+        for (const block of blocks) {
+          const matches = block.match(/\(([^)]*)\)/g);
+          if (matches) {
+            for (const m of matches) text += m.slice(1, -1);
+            text += '\n';
+          }
+        }
+      }
+      if (!text.trim()) {
+        text = str.replace(/[^\x20-\x7E一-鿿　-〿＀-￯\n\r]/g, ' ').replace(/\s{2,}/g, '\n').trim();
+      }
+      if (text.trim().length > 10) {
+        dom.aiResume.value = text.trim().slice(0, 8000);
+        saveAiConfig();
+        showToast('PDF 文本已提取 (' + text.trim().length + ' 字符)', 'success');
+      } else {
+        showToast('未能提取到文本，请尝试复制粘贴', 'error');
+      }
+    } catch (err) { showToast('PDF 解析失败，请复制粘贴', 'error'); }
+  };
+  reader.readAsArrayBuffer(file);
+  e.target.value = '';
 }
 
 // ========== Tab 切换 ==========
