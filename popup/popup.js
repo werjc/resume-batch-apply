@@ -163,6 +163,12 @@ async function loadJobs() {
     const resp = await chrome.tabs.sendMessage(currentTabId, { action: 'parseJobs' });
     if (resp && resp.success && resp.jobs) {
       allJobs = resp.jobs;
+      // 加载已投 ID 并标记
+      try {
+        const r = await chrome.storage.local.get('appliedJobIds');
+        const appliedIds = r.appliedJobIds || [];
+        allJobs.forEach(j => { j.applied = appliedIds.includes(j.id); });
+      } catch (e) {}
       applyFilters();
     } else {
       dom.jobList.innerHTML = '<div class="job-list-empty">未能解析到岗位，请确认在搜索结果页</div>';
@@ -270,15 +276,16 @@ function renderJobList() {
       else matchBadge = `<span class="risk-badge risk-high" title="${mTitle}">🎯 ${ms}%匹配</span>`;
     }
 
+    const appliedTag = job.applied ? '<span class="risk-badge risk-low">✓ 已投</span>' : '';
     return `
-      <div class="job-item" data-id="${escapeHtml(job.id)}">
-        <input type="checkbox" class="job-checkbox" data-id="${escapeHtml(job.id)}" ${checked}>
+      <div class="job-item${job.applied?' job-applied':''}" data-id="${escapeHtml(job.id)}">
+        <input type="checkbox" class="job-checkbox" data-id="${escapeHtml(job.id)}" ${checked} ${job.applied?'disabled':''}>
         <div class="job-info">
           <div class="job-title ${hasUrl ? 'job-title-link' : ''}"
                ${hasUrl ? `data-url="${escapeHtml(job.url)}" title="点击跳转到详情页"` : ''}>
             ${escapeHtml(job.title)}
             ${hasUrl ? '<span class="link-icon">↗</span>' : ''}
-            ${riskBadge}${matchBadge}
+            ${riskBadge}${matchBadge}${appliedTag}
           </div>
           <div class="job-company">${escapeHtml(job.company)}${salaryDisplay}</div>
           <div class="job-meta">
@@ -308,22 +315,18 @@ function renderJobList() {
   dom.jobList.querySelectorAll('.job-checkbox').forEach(cb => {
     cb.addEventListener('change', (e) => {
       e.stopPropagation();
+      if (cb.disabled) return;
       const id = cb.dataset.id;
-      if (cb.checked) {
-        selectedIds.add(id);
-      } else {
-        selectedIds.delete(id);
-      }
+      if (cb.checked) { selectedIds.add(id); } else { selectedIds.delete(id); }
       updateJobCount();
     });
   });
 
-  // 点击整行也能切换复选框（但不包括岗位名链接区域）
   dom.jobList.querySelectorAll('.job-item').forEach(item => {
     item.addEventListener('click', (e) => {
-      // 如果点击的是链接标题，不切换复选框
       if (e.target.closest('.job-title-link')) return;
       const cb = item.querySelector('.job-checkbox');
+      if (cb.disabled) return;
       cb.checked = !cb.checked;
       cb.dispatchEvent(new Event('change'));
     });

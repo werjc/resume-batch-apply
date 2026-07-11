@@ -8,6 +8,7 @@ const STORAGE_KEYS = {
   APPLY_STATE: 'applyState',
   SCHEDULED_TASKS: 'scheduledTasks',
   APPLY_HISTORY: 'applyHistory',
+  APPLIED_JOB_IDS: 'appliedJobIds',
   AI_CONFIG: 'aiConfig',
   POPUP_FILTERS: 'popupFilters',
   RESUME: 'resumeText'
@@ -143,5 +144,36 @@ const Storage = {
    */
   async clearApplyState() {
     await this.remove('applyState');
+  },
+
+  // ========== 已投岗位记录 ==========
+
+  /**
+   * 批量标记岗位为已投（追加，不覆盖）
+   */
+  async markJobsApplied(jobIds) {
+    const ids = await this.get(STORAGE_KEYS.APPLIED_JOB_IDS, []);
+    let added = 0;
+    for (const id of jobIds) {
+      if (!ids.includes(id)) { ids.push(id); added++; }
+    }
+    if (ids.length > 500) ids.splice(0, ids.length - 500);
+    await this.set(STORAGE_KEYS.APPLIED_JOB_IDS, ids);
+    return added;
+  },
+
+  /**
+   * 获取已投岗位 ID 列表
+   */
+  async getAppliedJobIds() {
+    return await this.get(STORAGE_KEYS.APPLIED_JOB_IDS, []);
+  },
+
+  /**
+   * 检查某个岗位是否已投
+   */
+  async isJobApplied(jobId) {
+    const ids = await this.getAppliedJobIds();
+    return ids.includes(jobId);
   }
 };

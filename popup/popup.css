@@ -272,6 +272,9 @@ body {
 .risk-analyzing { background: var(--c-primary-light); color: var(--c-primary-dark); animation: pulse 1.5s infinite; }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
 
+.job-applied { opacity: .65; background: #f8fafc; }
+.job-applied:hover { opacity: .85; }
+
 /* ===== Stats Panel ===== */
 .stats-panel {
   background: var(--c-surface);

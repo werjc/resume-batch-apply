@@ -68,6 +68,19 @@
       chrome.runtime.sendMessage({ type: 'applyProgress', current: done, total, jobId: id, lastResult: results[results.length - 1] }).catch(() => {});
       if (!stopRequested && done < total) await sleep(2000 + Math.random() * 2000);
     }
+    // 投递完毕 — 记录已投成功的 ID
+    const successIds = results.filter(r => r.success).map(r => r.jobId);
+    if (successIds.length) {
+      chrome.storage.local.get('appliedJobIds').then(({ appliedJobIds }) => {
+        const ids = appliedJobIds || [];
+        for (const id of successIds) { if (!ids.includes(id)) ids.push(id); }
+        if (ids.length > 500) ids.splice(0, ids.length - 500);
+        chrome.storage.local.set({ appliedJobIds: ids });
+      }).catch(() => {});
+      // 同步标记到当前岗位数据
+      for (const job of allJobs) { if (successIds.includes(job.id)) job.applied = true; }
+      applyFilters();
+    }
     isApplying = false;
     const siteName = (ad && ad.name) || currentSiteName || '';
     chrome.runtime.sendMessage({ type: 'applyComplete', total, completed: done, successCount: results.filter(r => r.success).length, failCount: results.filter(r => !r.success).length, results, siteName }).catch(() => {});
@@ -170,6 +183,14 @@
     panelEl.querySelector('.rba-loginstatus').className = 'rba-loginstatus ' + (st.loggedIn ? 'rba-ok' : 'rba-warn');
     await loadFilters();
     await loadAiConfig();
+    // 跨站简历提示
+    const resumeText = panelEl.querySelector('#aiResume').value.trim();
+    if (resumeText && resumeText.length > 20) {
+      toast(`已加载简历 (${resumeText.length}字)`, 'info');
+    }
+    // 加载已投 ID
+    let appliedIds = [];
+    try { const r = await chrome.storage.local.get('appliedJobIds'); appliedIds = r.appliedJobIds || []; } catch (e) {}
     try {
       jobElementMap.clear();
       seenJobIds.clear();
@@ -178,7 +199,7 @@
         if (j.element) jobElementMap.set(j.id, j.element);
         seenJobIds.add(j.id);
         const risk = ad._assessJobRisk ? ad._assessJobRisk(j) : { level: 'low', score: 0, reasons: [] };
-        return { id: j.id, title: j.title, company: j.company, url: j.url || '', companyUrl: j.companyUrl || '', salary: j.salary, location: j.location, date: j.date, companyType: j.companyType, jobType: j.jobType, education: j.education || 'none', risk, tags: j.tags };
+        return { id: j.id, title: j.title, company: j.company, url: j.url || '', companyUrl: j.companyUrl || '', salary: j.salary, location: j.location, date: j.date, companyType: j.companyType, jobType: j.jobType, education: j.education || 'none', risk, tags: j.tags, applied: appliedIds.includes(j.id) };
       });
     } catch (e) { allJobs = []; jobElementMap.clear(); seenJobIds.clear(); }
     selectedIds.clear(); applyFilters();
@@ -204,10 +225,12 @@
     clearTimeout(waterfallDebounce);
   }
 
-  function syncNewJobs() {
+  async function syncNewJobs() {
     const ad = getAdapter();
     if (!ad) return;
     try {
+      let appliedIds = [];
+      try { const r = await chrome.storage.local.get('appliedJobIds'); appliedIds = r.appliedJobIds || []; } catch (e) {}
       const raw = ad.parseSearchResults();
       let added = 0;
       for (const j of raw) {
@@ -215,7 +238,7 @@
         seenJobIds.add(j.id);
         if (j.element) jobElementMap.set(j.id, j.element);
         const risk = ad._assessJobRisk ? ad._assessJobRisk(j) : { level: 'low', score: 0, reasons: [] };
-        allJobs.push({ id: j.id, title: j.title, company: j.company, url: j.url || '', companyUrl: j.companyUrl || '', salary: j.salary, location: j.location, date: j.date, companyType: j.companyType, jobType: j.jobType, education: j.education || 'none', risk, tags: j.tags });
+        allJobs.push({ id: j.id, title: j.title, company: j.company, url: j.url || '', companyUrl: j.companyUrl || '', salary: j.salary, location: j.location, date: j.date, companyType: j.companyType, jobType: j.jobType, education: j.education || 'none', risk, tags: j.tags, applied: appliedIds.includes(j.id) });
         added++;
       }
       if (added > 0) applyFilters();
@@ -262,17 +285,18 @@
         else if (ms >= 40) matchBadge = `<span class="rba-match rba-match-mid" title="${mTitle}">🎯 ${ms}%</span>`;
         else matchBadge = `<span class="rba-match rba-match-low" title="${mTitle}">🎯 ${ms}%</span>`;
       }
-      return `<div class="rba-jobitem" data-id="${esc(j.id)}">
-        <input type="checkbox" class="rba-cb" data-id="${esc(j.id)}" ${chk}>
+      const appliedTag = j.applied ? '<span class="rba-applied" title="已投递过此岗位">✓ 已投</span>' : '';
+      return `<div class="rba-jobitem${j.applied?' rba-applied-item':''}" data-id="${esc(j.id)}">
+        <input type="checkbox" class="rba-cb" data-id="${esc(j.id)}" ${chk} ${j.applied?'disabled':''}>
         <div class="rba-jobinfo">
-          <div class="rba-jobtitle ${hasUrl?'rba-link':''}" ${hasUrl?`data-url="${esc(j.url)}" title="点击在新标签页打开详情"`:''}>${esc(j.title)}${hasUrl?'<span class="rba-linkicon">↗</span>':''}${riskBadge}${matchBadge}</div>
+          <div class="rba-jobtitle ${hasUrl?'rba-link':''}" ${hasUrl?`data-url="${esc(j.url)}" title="点击在新标签页打开详情"`:''}>${esc(j.title)}${hasUrl?'<span class="rba-linkicon">↗</span>':''}${riskBadge}${matchBadge}${appliedTag}</div>
           <div class="rba-jobcompany">${j.companyUrl ? `<a href="${j.companyUrl.replace(/"/g,'&quot;')}" target="_blank" class="rba-link" title="打开公司主页">${esc(j.company)}</a>` : esc(j.company)}${j.salary?' · '+esc(j.salary):''}</div>
           <div class="rba-jobmeta">${j.education&&j.education!=='none'?`<span>${eduLabel(j.education)}</span>`:''}${j.jobType?`<span>${jobTypeLabel(j.jobType)}</span>`:''}${j.date?`<span>${esc(j.date)}</span>`:''}${j.location?`<span>${esc(j.location)}</span>`:''}</div>
         </div>
       </div>`;
     }).join('');
-    list.querySelectorAll('.rba-cb').forEach(cb => cb.addEventListener('change', e => { e.stopPropagation(); cb.checked ? selectedIds.add(cb.dataset.id) : selectedIds.delete(cb.dataset.id); updateJobCount(); }));
-    list.querySelectorAll('.rba-jobitem').forEach(item => item.addEventListener('click', e => { if (e.target.closest('.rba-link') || e.target.closest('.rba-cb')) return; const cb = item.querySelector('.rba-cb'); cb.checked = !cb.checked; cb.dispatchEvent(new Event('change')); }));
+    list.querySelectorAll('.rba-cb').forEach(cb => cb.addEventListener('change', e => { e.stopPropagation(); if (cb.disabled) return; cb.checked ? selectedIds.add(cb.dataset.id) : selectedIds.delete(cb.dataset.id); updateJobCount(); }));
+    list.querySelectorAll('.rba-jobitem').forEach(item => item.addEventListener('click', e => { if (e.target.closest('.rba-link') || e.target.closest('.rba-cb')) return; const cb = item.querySelector('.rba-cb'); if (cb.disabled) return; cb.checked = !cb.checked; cb.dispatchEvent(new Event('change')); }));
     list.querySelectorAll('.rba-link').forEach(el => el.addEventListener('click', e => { e.stopPropagation(); if (el.dataset.url) window.open(el.dataset.url, '_blank'); }));
   }
 
@@ -619,6 +643,10 @@
 .rba-match-high{background:#d4edda;color:#155724}
 .rba-match-mid{background:#fef3cd;color:#856404}
 .rba-match-low{background:#fde7e9;color:#c00}
+
+.rba-applied{font-size:10px;padding:2px 8px;border-radius:10px;margin-left:4px;font-weight:600;background:#e2e8f0;color:#64748b}
+.rba-applied-item{opacity:.65;background:#f8fafc}
+.rba-applied-item:hover{opacity:.85}
 
 .rba-progress{padding:8px 0;flex-shrink:0;margin:0 4px}
 .rba-barwrap{height:5px;background:var(--rba-bor);border-radius:3px;overflow:hidden}

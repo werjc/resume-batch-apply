@@ -1,5 +1,31 @@
 # 开发日志（试错与纠正）
 
+## 2026-07-11 — v3.2.0 已投去重 + 跨站简历
+
+**用户需求**: 投过的岗位刷新后不认识、简历在popup写了sidebar看不到。
+
+**已投去重设计**:
+- 投递成功时收集所有 `success: true` 的 jobId
+- 追加（push）到 `chrome.storage.local` 的 `appliedJobIds` 数组，不覆盖已有记录
+- 面板打开/瀑布流同步时加载 appliedJobIds，对每个岗位标记 `applied: true/false`
+- `applyHistory`（批次级统计）和 `appliedJobIds`（岗位级去重）各司其职，互不影响
+
+**已投标记 UI**:
+- 已投岗位 checkbox 禁用（disabled），防止误选重复投递
+- 行整体 opacity 降为 .65，hover 恢复 .85
+- 灰色 pill 标签「✓ 已投」
+
+**跨站简历**: 
+- 确认 popup 和 sidebar 都用同一个 `aiConfig` key 读写，数据天然共享
+- 新增面板打开时 toast 提示"已加载简历 (xxx字)"，让用户感知到数据已恢复
+
+**ID 稳定性讨论**:
+- 当前 ID 基于 title+company+url 生成（适配器级）
+- 理论上同一岗位再次解析 ID 相同，去重生效
+- 极端情况：岗位标题被HR微调会导致 ID 不同 → 后续可加 title 模糊匹配兜底，当前阶段精确匹配已覆盖 90% 场景
+
+---
+
 ## 2026-07-11 — v3.1.1 间距修复
 
 **问题**: 用户反馈各 UI 按钮与按钮、按钮与界面边缘挤在一起，缺乏呼吸感。
