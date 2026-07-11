@@ -2,8 +2,9 @@
 
 ## v3.1.1 (2026-07-11)
 **修复** — 统一按钮与界面边距
-- popup 卡片左右边距 12→16px，按钮 gap 10→14px，actions padding 12→20px
+- popup 卡片 margin 12→16px，按钮 gap 10→14px，actions padding 12→20px
 - sidebar body padding 12→16px，actions gap 8→12px，header padding 18→20px
+**文档** — README + RESUME_GUIDE 同步至 v3.1.1，新增 CHANGELOG + DEVLOG
 
 ## v3.1.0 (2026-07-11)
 **功能** — UI 全面重设计 & 视觉美化
