@@ -122,7 +122,8 @@
     // 筛选折叠
     $('.rba-filter-toggle').addEventListener('click', () => { $('.rba-filter-toggle').classList.toggle('collapsed'); $('.rba-filter-panel').classList.toggle('collapsed'); saveFilters(); });
     // 筛选变更
-    ['filterDate','filterCompanyType','filterEducation','filterRisk'].forEach(id => { $(`#${id}`).addEventListener('change', () => { applyFilters(); saveFilters(); }); });
+    ['filterDate','filterCompanyType','filterEducation','filterRisk'].forEach(id => { $(`#${id}`).addEventListener('change', () => { saveFilters(); }); });
+    $('.rba-btn-applyfilter').addEventListener('click', () => { applyFilters(); saveFilters(); toast('筛选已应用', 'info'); });
     // 全选/反选
     $('.rba-btn-selectall').addEventListener('click', () => { filteredJobs.forEach(j => selectedIds.add(j.id)); renderJobList(); updateJobCount(); });
     $('.rba-btn-invert').addEventListener('click', () => { const s = new Set(); filteredJobs.forEach(j => { if (!selectedIds.has(j.id)) s.add(j.id); }); selectedIds = s; renderJobList(); updateJobCount(); });
@@ -403,47 +404,88 @@
   function eduLabel(e) { return { none: '学历不限', associate: '大专', bachelor: '本科', master: '硕士', doctor: '博士' }[e] || ''; }
   function fmtTime(s) { const d = new Date(s); const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; }
   function esc(s) { if (!s) return ''; const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
-  function handlePdfUpload(e) {
+  async function handlePdfUpload(e) {
     const file = e.target.files[0];
     if (!file) return;
     toast('正在提取 PDF 文本...', 'info');
-    const reader = new FileReader();
-    reader.onload = function() {
+    try {
+      const buf = await file.arrayBuffer();
+      const text = await extractPdfText(buf);
+      if (text.trim().length > 10) {
+        panelEl.querySelector('#aiResume').value = text.trim().slice(0, 8000);
+        saveAiConfig();
+        toast('PDF 文本已提取 (' + text.trim().length + ' 字符)', 'success');
+      } else {
+        toast('未能提取到文本，请尝试复制粘贴', 'error');
+      }
+    } catch (err) {
+      toast('PDF 解析失败，请复制粘贴', 'error');
+    }
+    e.target.value = '';
+  }
+
+  async function extractPdfText(buf) {
+    const bytes = new Uint8Array(buf);
+    const raw = new TextDecoder('latin1').decode(bytes);
+    const texts = [];
+
+    // 尝试解压所有 FlateDecode 流
+    const streamRe = /\/Filter\s*\/FlateDecode[^\n\r>]*>>\s*stream\s*\r?\n([\s\S]*?)endstream/gm;
+    let match;
+    while ((match = streamRe.exec(raw)) !== null) {
       try {
-        const arr = new Uint8Array(reader.result);
-        let text = '';
-        const str = String.fromCharCode.apply(null, arr);
-        // 提取 BT...ET 文本块（PDF文本对象）
-        const blocks = str.match(/BT[\s\S]*?ET/gi);
-        if (blocks) {
-          for (const block of blocks) {
-            const matches = block.match(/\(([^)]*)\)/g);
-            if (matches) {
-              for (const m of matches) {
-                text += m.slice(1, -1);
+        const compressed = new Uint8Array(match[1].split('').map(c => c.charCodeAt(0)));
+        const ds = new DecompressionStream('deflate-raw');
+        const writer = ds.writable.getWriter();
+        const reader = ds.readable.getReader();
+        writer.write(compressed);
+        writer.close();
+        let decompressed = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          decompressed += new TextDecoder().decode(value);
+        }
+        // 从解压后的内容提取 BT...ET 文本
+        const btBlocks = decompressed.match(/BT[\s\S]*?ET/g);
+        if (btBlocks) {
+          for (const block of btBlocks) {
+            // Tj 操作符: (text) Tj
+            const tj = block.match(/\(([^)]*)\)\s*Tj/g);
+            if (tj) {
+              for (const t of tj) {
+                const m = t.match(/\(([^)]*)\)/);
+                if (m) texts.push(m[1]);
               }
-              text += '\n';
+            }
+            // TJ 操作符: [(text) num (text)] TJ
+            const tjArr = block.match(/\[([^\]]*)\]\s*TJ/g);
+            if (tjArr) {
+              for (const arr of tjArr) {
+                const parts = arr.match(/\(([^)]*)\)/g);
+                if (parts) texts.push(parts.map(p => p.slice(1, -1)).join(''));
+              }
             }
           }
         }
-        // 兜底：提取所有可读文本
-        if (!text.trim()) {
-          text = str.replace(/[^\x20-\x7E一-鿿　-〿＀-￯\n\r]/g, ' ')
-            .replace(/\s{2,}/g, '\n').trim();
+      } catch (e) { /* 该流解压失败，跳过 */ }
+    }
+
+    // 兜底：尝试匹配未压缩的 BT/ET（某些 PDF 流不压缩）
+    if (!texts.length) {
+      const btBlocks = raw.match(/BT[\s\S]*?ET/g);
+      if (btBlocks) {
+        for (const block of btBlocks) {
+          const tj = block.match(/\(([^)]*)\)\s*Tj/g);
+          if (tj) for (const t of tj) {
+            const m = t.match(/\(([^)]*)\)/);
+            if (m) texts.push(m[1]);
+          }
         }
-        if (text.trim().length > 10) {
-          $('#aiResume').value = text.trim().slice(0, 8000);
-          saveAiConfig();
-          toast('PDF 文本已提取 (' + text.trim().length + ' 字符)', 'success');
-        } else {
-          toast('未能提取到文本，请尝试复制粘贴', 'error');
-        }
-      } catch (err) {
-        toast('PDF 解析失败，请复制粘贴', 'error');
       }
-    };
-    reader.readAsArrayBuffer(file);
-    e.target.value = '';
+    }
+
+    return texts.join('\n');
   }
 
   // ============================================================
@@ -456,8 +498,9 @@
         <div class="rba-filter-panel">
           <div class="rba-frow"><label>发布日期</label><select id="filterDate"><option value="all">不限</option><option value="1">24小时内</option><option value="3">3天内</option><option value="7">7天内</option><option value="14">14天内</option><option value="30">30天内</option></select></div>
           <div class="rba-frow"><label>公司类型</label><select id="filterCompanyType"><option value="all">不限</option><option value="listed">上市公司</option><option value="state">国企/央企</option><option value="foreign">外企</option><option value="private">民营企业</option><option value="startup">创业公司</option></select></div>
-          <div class="rba-frow"><label>学历要求</label><select id="filterEducation"><option value="all">不限</option><option value="none">学历不限</option><option value="associate">大专及以上</option><option value="bachelor">本科及以上</option><option value="master">硕士及以上</option><option value="doctor">博士</option></select></div>
+          <div class="rba-frow"><label>学历要求</label><select id="filterEducation"><option value="all">不限</option><option value="none">学历不限</option><option value="associate">我的学历：大专</option><option value="bachelor">我的学历：本科</option><option value="master">我的学历：硕士</option><option value="doctor">我的学历：博士</option></select></div>
           <div class="rba-frow"><label>风险等级</label><select id="filterRisk"><option value="all">不限</option><option value="high">⚠ 高风险</option><option value="medium">⚡ 中风险</option><option value="low">✓ 低风险</option><option value="analyzing">🔄 分析中</option></select></div>
+          <div style="margin-top:8px"><button class="rba-btn-applyfilter" style="width:100%;padding:6px;background:#0078D4;color:#fff;border:none;border-radius:4px;font-size:12px;cursor:pointer">应用筛选</button></div>
         </div>
       </div>
     </div>

@@ -406,12 +406,13 @@ function bindEvents() {
     saveFilters();
   });
 
-  // 应用筛选（+记忆）
-  dom.btnApplyFilter.addEventListener('click', () => { applyFilters(); saveFilters(); });
-  dom.filterDate.addEventListener('change', () => { applyFilters(); saveFilters(); });
-  dom.filterCompanyType.addEventListener('change', () => { applyFilters(); saveFilters(); });
-  dom.filterJobType.addEventListener('change', () => { applyFilters(); saveFilters(); });
-  dom.filterEducation.addEventListener('change', () => { applyFilters(); saveFilters(); });
+  // 筛选 change → 只记忆，不自动应用
+  dom.filterDate.addEventListener('change', saveFilters);
+  dom.filterCompanyType.addEventListener('change', saveFilters);
+  dom.filterJobType.addEventListener('change', saveFilters);
+  dom.filterEducation.addEventListener('change', saveFilters);
+  // 确定按钮 → 应用筛选
+  dom.btnApplyFilter.addEventListener('click', () => { applyFilters(); saveFilters(); showToast('筛选已应用', 'success'); });
 
   // 全选
   dom.btnSelectAll.addEventListener('click', () => {
@@ -698,40 +699,68 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
-function handlePdfUpload(e) {
+async function handlePdfUpload(e) {
   const file = e.target.files[0];
   if (!file) return;
   showToast('正在提取 PDF 文本...', 'info');
-  const reader = new FileReader();
-  reader.onload = function() {
+  try {
+    const buf = await file.arrayBuffer();
+    const text = await extractPdfText(buf);
+    if (text.trim().length > 10) {
+      dom.aiResume.value = text.trim().slice(0, 8000);
+      saveAiConfig();
+      showToast('PDF 文本已提取 (' + text.trim().length + ' 字符)', 'success');
+    } else {
+      showToast('未能提取到文本，请尝试复制粘贴', 'error');
+    }
+  } catch (err) { showToast('PDF 解析失败，请复制粘贴', 'error'); }
+  e.target.value = '';
+}
+
+async function extractPdfText(buf) {
+  const bytes = new Uint8Array(buf);
+  const raw = new TextDecoder('latin1').decode(bytes);
+  const texts = [];
+  const streamRe = /\/Filter\s*\/FlateDecode[^\n\r>]*>>\s*stream\s*\r?\n([\s\S]*?)endstream/gm;
+  let match;
+  while ((match = streamRe.exec(raw)) !== null) {
     try {
-      const arr = new Uint8Array(reader.result);
-      let text = '';
-      const str = String.fromCharCode.apply(null, arr);
-      const blocks = str.match(/BT[\s\S]*?ET/gi);
-      if (blocks) {
-        for (const block of blocks) {
-          const matches = block.match(/\(([^)]*)\)/g);
-          if (matches) {
-            for (const m of matches) text += m.slice(1, -1);
-            text += '\n';
+      const compressed = new Uint8Array(match[1].split('').map(c => c.charCodeAt(0)));
+      const ds = new DecompressionStream('deflate-raw');
+      const writer = ds.writable.getWriter();
+      const reader = ds.readable.getReader();
+      writer.write(compressed);
+      writer.close();
+      let decompressed = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        decompressed += new TextDecoder().decode(value);
+      }
+      const btBlocks = decompressed.match(/BT[\s\S]*?ET/g);
+      if (btBlocks) {
+        for (const block of btBlocks) {
+          const tj = block.match(/\(([^)]*)\)\s*Tj/g);
+          if (tj) for (const t of tj) { const m = t.match(/\(([^)]*)\)/); if (m) texts.push(m[1]); }
+          const tjArr = block.match(/\[([^\]]*)\]\s*TJ/g);
+          if (tjArr) for (const arr of tjArr) {
+            const parts = arr.match(/\(([^)]*)\)/g);
+            if (parts) texts.push(parts.map(p => p.slice(1, -1)).join(''));
           }
         }
       }
-      if (!text.trim()) {
-        text = str.replace(/[^\x20-\x7E一-鿿　-〿＀-￯\n\r]/g, ' ').replace(/\s{2,}/g, '\n').trim();
+    } catch (e) { /* skip */ }
+  }
+  if (!texts.length) {
+    const btBlocks = raw.match(/BT[\s\S]*?ET/g);
+    if (btBlocks) {
+      for (const block of btBlocks) {
+        const tj = block.match(/\(([^)]*)\)\s*Tj/g);
+        if (tj) for (const t of tj) { const m = t.match(/\(([^)]*)\)/); if (m) texts.push(m[1]); }
       }
-      if (text.trim().length > 10) {
-        dom.aiResume.value = text.trim().slice(0, 8000);
-        saveAiConfig();
-        showToast('PDF 文本已提取 (' + text.trim().length + ' 字符)', 'success');
-      } else {
-        showToast('未能提取到文本，请尝试复制粘贴', 'error');
-      }
-    } catch (err) { showToast('PDF 解析失败，请复制粘贴', 'error'); }
-  };
-  reader.readAsArrayBuffer(file);
-  e.target.value = '';
+    }
+  }
+  return texts.join('\n');
 }
 
 // ========== Tab 切换 ==========
