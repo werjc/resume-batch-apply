@@ -1,5 +1,27 @@
 # 开发日志（试错与纠正）
 
+## 2026-07-12 — v3.4.0 BOSS直聘断点续投
+
+**问题**: BOSS直聘选中多个岗位后点击"立即投递"，只投了第1个就停了。页面跳到了聊天页，其余岗位无法继续。
+
+**根因**: BOSS直聘的"立即沟通"按钮会导航到聊天页面（URL从 `/web/geek/job` 变为 `/web/geek/chat`）。content script 上下文销毁，`applyQueue`、`jobElementMap` 等全部丢失。
+
+**尝试**: 在聊天页通过 DOM 操作发送招呼语然后自动返回。但 BOSS 的聊天页有反爬机制，且 greeting 不能自动发送（需要用户交互）。
+
+**最终方案**: 断点续投——利用 `chrome.storage.local` 在跳转前后桥接状态：
+1. 投递前保存 `pendingQueue`（剩余岗位ID列表）+ `pendingSearchUrl`
+2. 投递操作导致跳转 → content script 在新页面重载
+3. 新页面检测到 pendingQueue → 自动 `window.location.href = pendingSearchUrl`
+4. 返回搜索页 → 重新 parseSearchResults 重建 jobElementMap → 从 queue[1] 继续（跳过已完成的 queue[0]）
+5. 循环直到 queue 为空
+
+**自检发现的 bug**:
+- 初版在 applyToPosition 返回后立即 remove('pendingQueue')，导致跳转后断点丢失 → 改为仅在循环正常结束或 resumePendingApply 接管时清理
+- resumePendingApply 未跳过已完成的 queue[0] → 加 queue.slice(1)
+- 空队列时未重置 isApplying + UI → 加显式重置
+
+---
+
 ## 2026-07-12 — v3.3.0 工程化加固
 
 **目标**: 从"能用的个人工具"向"可维护的项目"过渡。

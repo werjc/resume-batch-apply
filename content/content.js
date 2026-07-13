@@ -54,13 +54,21 @@
   // ===== 批量投递（基于元素直接操作） =====
   async function executeApply(ad) {
     const total = applyQueue.length; let done = 0; const results = [];
-    for (const id of applyQueue) {
+    const searchUrl = window.location.href;
+    for (let i = 0; i < applyQueue.length; i++) {
+      const id = applyQueue[i];
       if (stopRequested) { results.push({ jobId: id, success: false, message: '已停止' }); break; }
       const el = jobElementMap.get(id);
       if (!el) { results.push({ jobId: id, success: false, message: '未找到元素' }); done++; continue; }
+      // 断点续投：每次投递前保存剩余队列
+      const remaining = applyQueue.slice(i);
+      await chrome.storage.local.set({ pendingQueue: remaining, pendingSearchUrl: searchUrl, pendingTotal: total, pendingDone: done, pendingResults: results, pendingSite: (ad && ad.name) || currentSiteName }).catch(() => {});
       try {
         const r = await ad.applyToPosition(el);
         results.push({ jobId: id, ...r });
+        // 如果适配器返回 navigating:true（页面跳转了），停止循环
+        // 断点已在上方保存，等页面回来后 resumePendingApply 会接管
+        if (r.navigating) break;
       } catch (e) {
         results.push({ jobId: id, success: false, message: e.message });
       }
@@ -68,6 +76,8 @@
       chrome.runtime.sendMessage({ type: 'applyProgress', current: done, total, jobId: id, lastResult: results[results.length - 1] }).catch(() => {});
       if (!stopRequested && done < total) await sleep(2000 + Math.random() * 2000);
     }
+    // 正常结束（无跳转）→ 清除断点
+    chrome.storage.local.remove(['pendingQueue','pendingSearchUrl','pendingTotal','pendingDone','pendingResults']).catch(() => {});
     // 投递完毕 — 记录已投成功的 ID
     const successIds = results.filter(r => r.success).map(r => r.jobId);
     if (successIds.length) {
@@ -752,7 +762,50 @@
   window.addEventListener('popstate', onUrlChange);
   window.addEventListener('hashchange', onUrlChange);
 
+  // ===== 断点续投恢复 =====
+  async function resumePendingApply() {
+    try {
+      const r = await chrome.storage.local.get(['pendingQueue', 'pendingSearchUrl', 'pendingTotal', 'pendingDone', 'pendingResults']);
+      const queue = r.pendingQueue;
+      if (!queue || !queue.length) return;
+      const ad = getAdapter();
+      if (!ad || !ad.isSearchPage()) {
+        // 在聊天页或其他页面 → 尝试返回搜索页
+        if (r.pendingSearchUrl) {
+          setTimeout(() => { window.location.href = r.pendingSearchUrl; }, 2000);
+        }
+        return;
+      }
+      // 在搜索结果页 → 清理断点并继续
+      await chrome.storage.local.remove(['pendingQueue', 'pendingSearchUrl', 'pendingTotal', 'pendingDone', 'pendingResults']).catch(() => {});
+      await sleep(1500);
+      // 重新解析页面获取最新的 DOM 元素引用
+      await refreshPanelData();
+      // 恢复队列：跳过已完成的（queue[0]就是触发跳转的那个）
+      const resumeQueue = queue.slice(1);
+      if (!resumeQueue.length) {
+        isApplying = false; updateApplyUI(false);
+        toast('所有岗位已完成 ✓', 'success');
+        return;
+      }
+      applyQueue = resumeQueue;
+      stopRequested = false;
+      isApplying = true;
+      updateApplyUI(true);
+      updateProgress(r.pendingDone || 0, r.pendingTotal || queue.length);
+      toast(`继续投递（剩余 ${queue.length} 个岗位）`, 'info');
+      executeApply(ad);
+    } catch (e) { /* 静默 */ }
+  }
+
   // ===== 初始加载 =====
-  setTimeout(() => { const ad = getAdapter(); if (ad && ad.isSearchPage()) { chrome.runtime.sendMessage({ type: 'pageReady', siteName: ad.name, isSearchPage: true }).catch(() => {}); } }, 1000);
+  setTimeout(async () => {
+    const ad = getAdapter();
+    if (ad && ad.isSearchPage()) {
+      chrome.runtime.sendMessage({ type: 'pageReady', siteName: ad.name, isSearchPage: true }).catch(() => {});
+      // 检查是否有未完成的断点
+      await resumePendingApply();
+    }
+  }, 1500);
   console.log('[一键投递] 已加载，站点:', getAdapter()?.name || '未识别');
 })();

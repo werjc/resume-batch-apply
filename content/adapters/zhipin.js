@@ -118,49 +118,62 @@ class ZhipinAdapter extends BaseAdapter {
 
   async applyToPosition(element) {
     try {
-      // BOSS直聘实操流程：点击卡片→右侧详情→"立即沟通"
       // 第1步：点击岗位卡片，打开右侧详情面板
       element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      await this._sleep(400);
+      await this._sleep(500);
       element.click();
       await this._sleep(2000);
 
-      // 第2步：在详情面板（或页面任意位置）找"立即沟通"按钮
+      // 第2步：找详情面板中的"立即沟通"按钮（更全面的选择器）
       const chatSelectors = [
         '.btn-startchat', '.btn-chat', '.start-chat-btn',
         '[class*="start-chat"]', '[class*="startChat"]',
-        '.chat-btn', '.op-btn-startchat',
+        '.op-btn-startchat', '.chat-btn',
         'a[ka*="chat"]', 'button[ka*="chat"]',
-        '.dialog-btn', '.btn-send', '.op-btn',
+        '.geek-detail-btn', '.job-detail-btn',
+        '.chat-icon', '.op-btn-chat',
+        '.btn-communication', '.communication-btn',
+        // BOSS新版可能使用的选择器
+        'a[href*="chat"]', 'span:contains("立即沟通")',
       ];
       let chatBtn = null;
       for (const sel of chatSelectors) {
-        chatBtn = document.querySelector(sel);
-        if (chatBtn && chatBtn.offsetParent !== null) break;
-        chatBtn = null;
+        try {
+          chatBtn = document.querySelector(sel);
+          if (chatBtn && chatBtn.offsetParent !== null) break;
+          chatBtn = null;
+        } catch (e) { continue; }
       }
 
-      // 如果在详情面板找不到，尝试在卡片内找
+      // 兜底：找包含"沟通"或"聊"文字的按钮
       if (!chatBtn) {
-        chatBtn = element.querySelector('button, [class*="btn"], a[class*="btn"]');
+        const allBtns = document.querySelectorAll('a, button, span[role="button"]');
+        for (const btn of allBtns) {
+          const t = btn.textContent.trim();
+          if ((t.includes('沟通') || t.includes('聊') || t.includes('立即')) && btn.offsetParent !== null) {
+            chatBtn = btn; break;
+          }
+        }
       }
 
       if (!chatBtn) {
         return { success: false, message: '未找到沟通按钮，请手动操作' };
       }
 
-      // 第3步：点击"立即沟通"
+      // 第3步：记录即将跳转（BOSS的"沟通"会跳转到聊天页）
+      const currentUrl = window.location.href;
       chatBtn.click();
       await this._sleep(1500);
 
-      // 第4步：处理确认弹窗
+      // 第4步：检测是否跳转了（对比URL）
+      const navigated = window.location.href !== currentUrl;
+      if (navigated) {
+        // 页面已跳转到聊天页，content script 会通过 pendingQueue 断点续投
+        return { success: true, message: '已跳转至沟通页面', navigating: true };
+      }
+
+      // 第5步：未跳转 → 处理弹窗
       await this.waitForResult();
-
-      // 第5步：关闭详情面板（如果有）
-      const closeBtn = document.querySelector('.dialog-close, .modal-close, [class*="close"], .op-btn-close');
-      if (closeBtn) closeBtn.click();
-      await this._sleep(300);
-
       return { success: true, message: '已发送沟通' };
     } catch (e) {
       return { success: false, message: e.message };
