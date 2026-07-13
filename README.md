@@ -73,11 +73,11 @@ resume-batch-apply/
 │   ├── popup.js                 # 弹窗逻辑：筛选、投递、统计、CSV导出
 │   └── popup.css                # 弹窗样式（现代玻璃态）
 ├── utils/
-│   ├── storage.js               # chrome.storage 封装 + 常量
-│   └── scheduler.js             # 定时任务管理
+│   └── storage.js               # chrome.storage 封装 + 常量 + 错误日志
 ├── icons/                       # 扩展图标 (16/48/128px)
 ├── CHANGELOG.md                 # 版本更新日志
-└── DEVLOG.md                    # 开发日志（试错与纠正）
+├── DEVLOG.md                    # 开发日志（试错与纠正）
+└── TEST_CHECKLIST.md            # 8站点烟雾测试清单
 ```
 
 ## 🚀 安装使用

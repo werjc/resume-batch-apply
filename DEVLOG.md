@@ -1,5 +1,24 @@
 # 开发日志（试错与纠正）
 
+## 2026-07-12 — v3.3.0 工程化加固
+
+**目标**: 从"能用的个人工具"向"可维护的项目"过渡。
+
+**错误边界设计**:
+- 每个可能崩溃的入口（refreshPanelData、syncNewJobs）包裹 try/catch
+- 捕获后写 errorLog + console.error + 用户可见的错误提示（而非白屏）
+- 调试日志上限 50 条、每条最多 500 字符，防止撑爆 storage
+
+**死代码清理决策**:
+- `scheduler.js`：已验证全部逻辑在 service-worker 内联，安全删除
+- `Storage.addHistory`：数据形状（单条记录）与 `addToHistory`（批次记录）不兼容，删除避免误用
+
+**烟雾测试清单**:
+- 8 个站点各 2 项基础检查 + 7 项通用检查
+- 发版前逐项验证，发现的 bug 记入 DEVLOG
+
+---
+
 ## 2026-07-12 — v3.2.1 综合审查修复
 
 **审查方式**: 三个并行 Explore Agent 全量审查，覆盖 service-worker/storage/scheduler + content.js + adapters/popup。

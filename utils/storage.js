@@ -11,7 +11,8 @@ const STORAGE_KEYS = {
   APPLIED_JOB_IDS: 'appliedJobIds',
   AI_CONFIG: 'aiConfig',
   POPUP_FILTERS: 'popupFilters',
-  RESUME: 'resumeText'
+  RESUME: 'resumeText',
+  ERROR_LOG: 'errorLog'
 };
 
 const Storage = {
@@ -59,24 +60,6 @@ const Storage = {
   },
 
   // ========== 投递历史 ==========
-
-  /**
-   * 保存一条投递记录
-   * @param {Object} record { jobTitle, company, site, time, status }
-   */
-  async addHistory(record) {
-    const history = await this.get('applyHistory', []);
-    history.unshift({
-      ...record,
-      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-      time: record.time || new Date().toISOString()
-    });
-    // 只保留最近 200 条
-    if (history.length > 200) {
-      history.length = 200;
-    }
-    await this.set('applyHistory', history);
-  },
 
   /**
    * 获取投递历史
@@ -175,5 +158,38 @@ const Storage = {
   async isJobApplied(jobId) {
     const ids = await this.getAppliedJobIds();
     return ids.includes(jobId);
+  },
+
+  // ========== 错误日志 ==========
+
+  /**
+   * 记录错误日志（最近50条）
+   */
+  async logError(source, message, detail) {
+    try {
+      const logs = await this.get(STORAGE_KEYS.ERROR_LOG, []);
+      logs.unshift({
+        time: new Date().toISOString(),
+        source,
+        message,
+        detail: detail ? String(detail).slice(0, 500) : ''
+      });
+      if (logs.length > 50) logs.length = 50;
+      await this.set(STORAGE_KEYS.ERROR_LOG, logs);
+    } catch (e) { /* 日志系统自身出错则静默 */ }
+  },
+
+  /**
+   * 获取错误日志
+   */
+  async getErrorLogs() {
+    return await this.get(STORAGE_KEYS.ERROR_LOG, []);
+  },
+
+  /**
+   * 清除错误日志
+   */
+  async clearErrorLogs() {
+    await this.remove(STORAGE_KEYS.ERROR_LOG);
   }
 };

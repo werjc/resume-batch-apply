@@ -159,6 +159,7 @@
     $('#btnPdfUpload').addEventListener('click', () => $('#aiPdfInput').click());
     $('#aiPdfInput').addEventListener('change', handlePdfUpload);
     $('#btnAiAnalyze').addEventListener('click', runAiAnalysis);
+    $('#btnDebugLog').addEventListener('click', showDebugLog);
 
     $('.rba-btn-refresh').addEventListener('click', refreshPanelData);
     // 投递
@@ -173,35 +174,52 @@
     chrome.runtime.onMessage.addListener(handleBgMsg);
   }
 
+  // ===== 错误日志辅助 =====
+  function logError(source, message, detail) {
+    console.error('[一键投递]', source, message, detail);
+    chrome.storage.local.get('errorLog').then(r => {
+      const logs = r.errorLog || [];
+      logs.unshift({ time: new Date().toISOString(), source, message, detail: detail ? String(detail).slice(0, 500) : '' });
+      if (logs.length > 50) logs.length = 50;
+      chrome.storage.local.set({ errorLog: logs });
+    }).catch(() => {});
+  }
+
   // ===== 数据刷新 =====
   async function refreshPanelData() {
     const ad = getAdapter();
     if (!ad) return;
-    const st = ad.checkLoginStatus();
-    panelEl.querySelector('.rba-sitename').textContent = ad.name;
-    panelEl.querySelector('.rba-loginstatus').textContent = st.loggedIn ? '已登录' : '未登录';
-    panelEl.querySelector('.rba-loginstatus').className = 'rba-loginstatus ' + (st.loggedIn ? 'rba-ok' : 'rba-warn');
-    await loadFilters();
-    await loadAiConfig();
-    // 跨站简历提示
-    const resumeText = panelEl.querySelector('#aiResume').value.trim();
-    if (resumeText && resumeText.length > 20) {
-      toast(`已加载简历 (${resumeText.length}字)`, 'info');
-    }
-    // 加载已投 ID
-    let appliedIds = [];
-    try { const r = await chrome.storage.local.get('appliedJobIds'); appliedIds = r.appliedJobIds || []; } catch (e) {}
     try {
+      const st = ad.checkLoginStatus();
+      panelEl.querySelector('.rba-sitename').textContent = ad.name;
+      panelEl.querySelector('.rba-loginstatus').textContent = st.loggedIn ? '已登录' : '未登录';
+      panelEl.querySelector('.rba-loginstatus').className = 'rba-loginstatus ' + (st.loggedIn ? 'rba-ok' : 'rba-warn');
+      await loadFilters();
+      await loadAiConfig();
+      const resumeText = panelEl.querySelector('#aiResume').value.trim();
+      if (resumeText && resumeText.length > 20) {
+        toast(`已加载简历 (${resumeText.length}字)`, 'info');
+      }
+      let appliedIds = [];
+      try { const r = await chrome.storage.local.get('appliedJobIds'); appliedIds = r.appliedJobIds || []; } catch (e) {}
       jobElementMap.clear();
       seenJobIds.clear();
       const raw = ad.parseSearchResults();
+      if (!raw || !raw.length) {
+        panelEl.querySelector('.rba-joblist').innerHTML = '<div class="rba-empty">当前页面未解析到岗位，请确认在搜索结果页</div>';
+        logError('parseSearchResults', '解析结果为空', ad.name);
+      }
       allJobs = raw.map(j => {
         if (j.element) jobElementMap.set(j.id, j.element);
         seenJobIds.add(j.id);
         const risk = ad._assessJobRisk ? ad._assessJobRisk(j) : { level: 'low', score: 0, reasons: [] };
         return { id: j.id, title: j.title, company: j.company, url: j.url || '', companyUrl: j.companyUrl || '', salary: j.salary, location: j.location, date: j.date, companyType: j.companyType, jobType: j.jobType, education: j.education || 'none', risk, tags: j.tags, applied: appliedIds.includes(j.id) };
       });
-    } catch (e) { allJobs = []; jobElementMap.clear(); seenJobIds.clear(); }
+    } catch (e) {
+      logError('refreshPanelData', '面板数据刷新失败', e.message);
+      allJobs = []; jobElementMap.clear(); seenJobIds.clear();
+      panelEl.querySelector('.rba-joblist').innerHTML = '<div class="rba-empty">⚠ 解析失败，请刷新页面重试</div>';
+    }
     selectedIds.clear(); applyFilters();
     autoAiAnalyze();
     startWaterfallWatch();
@@ -243,7 +261,7 @@
         added++;
       }
       if (added > 0) applyFilters();
-    } catch (e) { /* ignore */ }
+    } catch (e) { logError('syncNewJobs', '瀑布流同步失败', e.message); }
   }
 
   // ===== 筛选 =====
@@ -430,6 +448,18 @@
   function eduLabel(e) { return { none: '学历不限', associate: '大专', bachelor: '本科', master: '硕士', doctor: '博士' }[e] || ''; }
   function fmtTime(s) { const d = new Date(s); const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; }
   function esc(s) { if (!s) return ''; const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+  async function showDebugLog() {
+    try {
+      const r = await chrome.storage.local.get('errorLog');
+      const logs = r.errorLog || [];
+      if (!logs.length) return toast('没有错误日志 ✓', 'success');
+      const text = logs.map(l => `[${l.time.slice(5,16)}] ${l.source}: ${l.message}`).join('\n');
+      // 复制到剪贴板
+      await navigator.clipboard.writeText(text);
+      toast(`已复制 ${logs.length} 条日志到剪贴板`, 'info');
+    } catch (e) { toast('读取日志失败', 'error'); }
+  }
   async function handlePdfUpload(e) {
     const file = e.target.files[0];
     if (!file) return;
@@ -546,6 +576,7 @@
           <div class="rba-ai-actions">
             <button class="rba-btn-ai-analyze" id="btnAiAnalyze">🤖 AI 分析当前岗位</button>
             <span class="rba-ai-status" id="aiStatus"></span>
+            <button class="rba-debug-btn" id="btnDebugLog" title="查看最近错误日志">🔧</button>
           </div>
         </div>
       </div>
@@ -597,6 +628,8 @@
 .rba-ai-status{font-size:11px;color:var(--rba-txt2)}
 .rba-pdf-btn{background:none;border:1px solid var(--rba-bor);border-radius:var(--rba-rs);font-size:10px;cursor:pointer;padding:2px 8px;margin-left:6px;color:var(--rba-txt2);transition:all .15s}
 .rba-pdf-btn:hover{background:var(--rba-bg);color:var(--rba-acc);border-color:var(--rba-acc)}
+.rba-debug-btn{background:none;border:1px solid var(--rba-bor);border-radius:var(--rba-rs);font-size:12px;cursor:pointer;padding:2px 8px;color:var(--rba-txt3);margin-left:auto}
+.rba-debug-btn:hover{background:var(--rba-bg);color:var(--rba-err)}
 
 .rba-actions-wrap{flex-shrink:0;z-index:2;padding:14px 0 0;border-top:1px solid var(--rba-bor);margin-top:8px}
 
