@@ -1,12 +1,14 @@
 # 版本更新日志
 
 ## v3.3.0 (2026-07-12)
-**工程化** — 错误边界 + 调试日志 + 死代码清理 + 测试清单
+**工程化** — 错误边界 + 调试日志 + 死代码清理 + 测试清单 + Chrome商店准备
 - 全局错误边界：refreshPanelData/syncNewJobs 异常不再白屏，显示错误提示
 - 调试日志：chrome.storage.local 存最近50条错误，AI面板🔧按钮一键复制到剪贴板
 - 死代码清理：删除 utils/scheduler.js（100行从未引用）
 - 删除 Storage.addHistory（与 service-worker addToHistory 数据形状冲突）
 - 新增 TEST_CHECKLIST.md：8站点烟雾测试清单
+- 新增 PRIVACY.md：隐私政策（Chrome Web Store 审核必备）
+- manifest description 更新为完整功能描述
 
 ## v3.2.1 (2026-07-12)
 **修复** — 综合审查 19 项修复（关键4项 + 中等7项 + 低优8项）
