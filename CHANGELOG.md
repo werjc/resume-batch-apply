@@ -1,5 +1,15 @@
 # 版本更新日志
 
+## v3.2.1 (2026-07-12)
+**修复** — 综合审查 19 项修复（关键4项 + 中等7项 + 低优8项）
+- popup: 修复 btnRefresh 缺失导致初始化崩溃；统计面板 siteName 读取路径
+- popup: AI 分析结果补 ai:true；CSV 导出 h.time 兜底；清除 .crawl-toolbar 死选择器
+- content: PDF 加 10MB 大小限制 + 优化字节转换（OOM 防护）
+- content: 全选/反选跳过已投岗位 + 竞态保护（面板关闭时不启动 Observer）
+- service-worker: waitForTabLoad 已加载标签页不再阻塞 15s + 监听器泄漏修复
+- service-worker: hostname 匹配反转修复（taskHost/tabHost endsWith 双向比对）
+- base: _extractJobTitleFallback 兜底不再返回公司名；正面信号显示在风险提示中
+
 ## v3.2.0 (2026-07-11)
 **功能** — 已投岗位去重 + 跨站简历共享
 - 新增 `appliedJobIds` 存储层：投递成功自动记录岗位 ID（追加不覆盖，上限 500 条）

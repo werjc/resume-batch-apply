@@ -222,7 +222,7 @@ class BaseAdapter {
     for (const t of texts) {
       if (t.length >= 3 && t.length <= 120 && t !== excludeText && !this._looksLikeCompanyName(t)) return t;
     }
-    return excludeText; // 实在找不到，返回原标题（即使=公司名）
+    return '未知岗位'; // 实在找不到，不要返回公司名
   }
 
   /** 判断文本是否像公司名 */

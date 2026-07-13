@@ -65,7 +65,9 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     const tabs = await chrome.tabs.query({});
     let targetTab = tabs.find(t => {
       try {
-        return new URL(t.url).hostname.includes(new URL(task.siteUrl).hostname);
+        const taskHost = new URL(task.siteUrl).hostname;
+        const tabHost = new URL(t.url).hostname;
+        return tabHost.endsWith(taskHost) || taskHost.endsWith(tabHost);
       } catch { return false; }
     });
 
@@ -119,14 +121,25 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
  * 等待标签页加载完成
  */
 function waitForTabLoad(tabId) {
-  return new Promise((resolve) => {
-    const timeout = setTimeout(() => resolve(), 15000); // 最多等15秒
+  return new Promise(async (resolve) => {
+    // 先检查标签页是否已加载完毕
+    try {
+      const tab = await chrome.tabs.get(tabId);
+      if (tab.status === 'complete') {
+        setTimeout(resolve, 2000); // 已加载，等2秒渲染
+        return;
+      }
+    } catch (e) { /* 标签页可能不存在 */ }
+
+    const timeout = setTimeout(() => {
+      chrome.tabs.onUpdated.removeListener(listener);
+      resolve();
+    }, 15000);
 
     function listener(updatedTabId, changeInfo) {
       if (updatedTabId === tabId && changeInfo.status === 'complete') {
         clearTimeout(timeout);
         chrome.tabs.onUpdated.removeListener(listener);
-        // 再等2秒确保页面JS渲染完成
         setTimeout(resolve, 2000);
       }
     }

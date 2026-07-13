@@ -776,7 +776,7 @@ function switchTab(tab) {
   dom.tabStats.classList.toggle('tab-active', tab === 'stats');
   dom.jobListSection.classList.toggle('hidden', tab !== 'jobs');
   dom.statsPanel.classList.toggle('hidden', tab !== 'stats');
-  document.querySelectorAll('.crawl-toolbar, .filter-section').forEach(el => {
+  document.querySelectorAll('.filter-section').forEach(el => {
     el.classList.toggle('hidden', tab !== 'jobs');
   });
   if (tab === 'stats') loadStats();
@@ -802,7 +802,7 @@ async function loadStats() {
     const sites = {};
     for (const h of history) {
       for (const r of (h.results || [])) {
-        const site = r.siteName || '未知';
+        const site = h.siteName || '未知';
         if (!sites[site]) sites[site] = { total: 0, success: 0 };
         sites[site].total++;
         if (r.success) sites[site].success++;
@@ -828,7 +828,7 @@ async function exportCsv() {
 
     const rows = [['时间', '站点', '总投递', '成功', '失败']];
     for (const h of history) {
-      rows.push([h.time, h.siteName || '', h.total || 0, h.successCount || 0, h.failCount || 0]);
+      rows.push([h.time || '', h.siteName || '', h.total || 0, h.successCount || 0, h.failCount || 0]);
     }
     const csv = '﻿' + rows.map(r => r.map(c => '"' + String(c).replace(/"/g, '""') + '"').join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
@@ -897,7 +897,7 @@ async function runAiAnalysis() {
       for (const r of (resp.results || [])) {
         const job = allJobs.find(j => j.id === r.id);
         if (job) {
-          if (r.risk) job.risk = r.risk;
+          if (r.risk) job.risk = { level: r.risk.level || 'low', score: r.risk.score || 0, reasons: r.risk.reasons || [], ai: true };
           if (r.companyType && r.companyType !== 'unknown') job.companyType = r.companyType;
           if (r.matchScore !== undefined) { job.matchScore = r.matchScore; job.matchReasons = r.matchReasons; }
           updated++;

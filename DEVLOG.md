@@ -1,5 +1,23 @@
 # 开发日志（试错与纠正）
 
+## 2026-07-12 — v3.2.1 综合审查修复
+
+**审查方式**: 三个并行 Explore Agent 全量审查，覆盖 service-worker/storage/scheduler + content.js + adapters/popup。
+
+**关键修复**:
+- popup 初始化崩溃：`btnRefresh` 元素在 v3.0 删除爬取工具栏时被误删，但 JS 引用残留 → `null.addEventListener` 抛 TypeError
+- 统计面板 siteName：字段在 `h.siteName`（批次级），代码读的是 `r.siteName`（岗位级，始终 undefined）
+- PDF OOM：50MB PDF 的 `split('').map()` 可创建千万级数组 → 改为 for 循环字节转换 + 10MB 硬限制
+- 定时投递 15s 卡顿：`waitForTabLoad` 不检查标签页是否已加载 → 预检 `tab.status === 'complete'`
+- 全选误选已投：Set 操作绕过 checkbox disabled → 遍历时过滤 `j.applied`
+
+**低优先级遗留**:
+- `utils/scheduler.js` 100 行死代码（所有逻辑已内联到 service-worker）— 暂保留不删
+- `Storage.addHistory` vs `addToHistory` 数据形状冲突 — 暂不触发，保留观察
+- `_getAllPossibleCards` ~50 次 querySelectorAll 性能 — 不影响功能，留待重构
+
+---
+
 ## 2026-07-11 — v3.2.0 已投去重 + 跨站简历
 
 **用户需求**: 投过的岗位刷新后不认识、简历在popup写了sidebar看不到。

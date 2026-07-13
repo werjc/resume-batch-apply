@@ -138,8 +138,8 @@
     ['filterDate','filterCompanyType','filterEducation','filterRisk'].forEach(id => { $(`#${id}`).addEventListener('change', () => { saveFilters(); }); });
     $('.rba-btn-applyfilter').addEventListener('click', () => { applyFilters(); saveFilters(); toast('筛选已应用', 'info'); });
     // 全选/反选
-    $('.rba-btn-selectall').addEventListener('click', () => { filteredJobs.forEach(j => selectedIds.add(j.id)); renderJobList(); updateJobCount(); });
-    $('.rba-btn-invert').addEventListener('click', () => { const s = new Set(); filteredJobs.forEach(j => { if (!selectedIds.has(j.id)) s.add(j.id); }); selectedIds = s; renderJobList(); updateJobCount(); });
+    $('.rba-btn-selectall').addEventListener('click', () => { filteredJobs.forEach(j => { if (!j.applied) selectedIds.add(j.id); }); renderJobList(); updateJobCount(); });
+    $('.rba-btn-invert').addEventListener('click', () => { const s = new Set(); filteredJobs.forEach(j => { if (!selectedIds.has(j.id) && !j.applied) s.add(j.id); }); selectedIds = s; renderJobList(); updateJobCount(); });
     // AI 模块
     $('.rba-ai-toggle').addEventListener('click', () => { $('.rba-ai-toggle').classList.toggle('collapsed'); $('.rba-ai-panel').classList.toggle('collapsed'); });
     $('#aiProvider').addEventListener('change', () => {
@@ -212,6 +212,7 @@
   let waterfallDebounce = null;
 
   function startWaterfallWatch() {
+    if (!panelVisible) return; // 面板已关闭，不启动
     stopWaterfallWatch();
     waterfallObserver = new MutationObserver(() => {
       clearTimeout(waterfallDebounce);
@@ -276,7 +277,8 @@
       else if (risk.level === 'high') riskLabel = `⚠ 高风险${aiTag}`;
       else if (risk.level === 'medium') riskLabel = `⚡ 中风险${aiTag}`;
       else riskLabel = `✓ 低风险${aiTag}`;
-      const riskBadge = `<span class="rba-risk rba-risk-${risk.level}" title="${esc((risk.reasons||[]).join('; ') || '未检测到风险')}">${riskLabel}</span>`;
+      const posStr = (risk.positives||[]).length ? ' · 👍' + esc(risk.positives.join('; ')) : '';
+      const riskBadge = `<span class="rba-risk rba-risk-${risk.level}" title="${esc((risk.reasons||[]).join('; ') || '未检测到风险')}${posStr}">${riskLabel}</span>`;
       let matchBadge = '';
       if (j.matchScore !== undefined) {
         const ms = j.matchScore;
@@ -449,6 +451,8 @@
   }
 
   async function extractPdfText(buf) {
+    const MAX_SIZE = 10 * 1024 * 1024; // 10MB 限制
+    if (buf.byteLength > MAX_SIZE) throw new Error('PDF 文件过大（最大10MB）');
     const bytes = new Uint8Array(buf);
     const raw = new TextDecoder('latin1').decode(bytes);
     const texts = [];
@@ -458,7 +462,9 @@
     let match;
     while ((match = streamRe.exec(raw)) !== null) {
       try {
-        const compressed = new Uint8Array(match[1].split('').map(c => c.charCodeAt(0)));
+        const streamBytes = match[1];
+        const compressed = new Uint8Array(streamBytes.length);
+        for (let i = 0; i < streamBytes.length; i++) compressed[i] = streamBytes.charCodeAt(i) & 0xFF;
         const ds = new DecompressionStream('deflate-raw');
         const writer = ds.writable.getWriter();
         const reader = ds.readable.getReader();
