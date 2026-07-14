@@ -64,7 +64,7 @@ class NcssAdapter extends BaseAdapter {
   async applyToPosition(element) {
     try {
       const applyBtn = element.querySelector('button, [class*="apply"], [class*="deliver"], a');
-      if (applyBtn) { applyBtn.click(); await this._sleep(1500); }
+      if (applyBtn) { const currentUrl = window.location.href; applyBtn.click(); await this._sleep(2000); if (window.location.href !== currentUrl) return { success: true, message: '已跳转', navigating: true }; }
       return await this.waitForResult();
     } catch (e) { return { success: false, message: e.message }; }
   }

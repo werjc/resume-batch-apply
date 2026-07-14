@@ -1,5 +1,23 @@
 # 开发日志（试错与纠正）
 
+## 2026-07-14 — v3.6.0 全域批量投递修复
+
+**问题**: v3.4.0 的断点续投只对 BOSS直聘生效。用户测试发现智联等所有网站都是第一个岗位跳转后停止。
+
+**第一次尝试（v3.4.0）**: 依赖每个适配器 return { navigating: true } 来触发断点。
+**失败原因**: 其他 7 个适配器根本没写这个字段，executeApply 看不到 navigating 标志，继续循环→失败。
+
+**第二次尝试（回退）**: 逐个修改 7 个适配器加 navigating 返回。
+**更优方案（采纳）**: executeApply 层在 applyToPosition 前后各抓一次 URL，**无论适配器返回什么**，只要 URL 变了就 break。
+
+**额外发现**:
+- resumePendingApply 内部调用 refreshPanelData 需要 panelEl 存在 → 面板关闭时崩溃
+  - 修复: 加 panelEl/panelVisible 检测，必要时自动 createPanel
+- 多个适配器的 applyToPosition 只有 1.5s sleep → 某些慢页面跳转可能来不及
+  - 修复: sleep 统一 2s
+
+---
+
 ## 2026-07-14 — v3.5.0 智联招聘全子站适配
 
 **需求**: 智联招聘实际有 5 个子站（闲才/政企/校园/卓聘/海外），当前适配器只覆盖了主站。

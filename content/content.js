@@ -64,11 +64,12 @@
       const remaining = applyQueue.slice(i);
       await chrome.storage.local.set({ pendingQueue: remaining, pendingSearchUrl: searchUrl, pendingTotal: total, pendingDone: done, pendingResults: results, pendingSite: (ad && ad.name) || currentSiteName }).catch(() => {});
       try {
+        const beforeUrl = window.location.href;
         const r = await ad.applyToPosition(el);
         results.push({ jobId: id, ...r });
-        // 如果适配器返回 navigating:true（页面跳转了），停止循环
-        // 断点已在上方保存，等页面回来后 resumePendingApply 会接管
-        if (r.navigating) break;
+        // 自动检测页面是否跳转了（不依赖适配器返回 navigating 标志）
+        const urlChanged = window.location.href !== beforeUrl;
+        if (r.navigating || urlChanged) break;
       } catch (e) {
         results.push({ jobId: id, success: false, message: e.message });
       }
@@ -776,7 +777,9 @@
         }
         return;
       }
-      // 在搜索结果页 → 清理断点并继续
+      // 在搜索结果页 → 确保面板打开 + 清理断点并继续
+      if (!panelEl) createPanel();
+      if (!panelVisible) { panelVisible = true; panelEl.classList.remove('rba-collapsed'); setPageMargin(true); }
       await chrome.storage.local.remove(['pendingQueue', 'pendingSearchUrl', 'pendingTotal', 'pendingDone', 'pendingResults']).catch(() => {});
       await sleep(1500);
       // 重新解析页面获取最新的 DOM 元素引用

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "一键批量投递简历",
-  "version": "3.5.0",
+  "version": "3.6.0",
   "description": "支持BOSS直聘、智联等8大招聘网站一键批量投递。AI风险分析、简历匹配评分、瀑布流实时同步、投递统计与导出",
   "permissions": [
     "storage",

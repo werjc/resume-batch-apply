@@ -147,8 +147,14 @@ class ZhaopinAdapter extends BaseAdapter {
         return { success: false, message: '未找到投递按钮' };
       }
 
+      const currentUrl = window.location.href;
       applyBtn.click();
-      await this._sleep(1500);
+      await this._sleep(2000);
+      // 检测页面是否跳转
+      const navigated = window.location.href !== currentUrl;
+      if (navigated) {
+        return { success: true, message: '已跳转', navigating: true };
+      }
       return await this.waitForResult();
     } catch (e) {
       return { success: false, message: e.message };

@@ -1,5 +1,12 @@
 # 版本更新日志
 
+## v3.6.0 (2026-07-14)
+**修复** — 全域批量投递：8网站统一断点续投
+- executeApply 层自动检测 URL 跳转（beforeUrl vs afterUrl），不再依赖适配器单独返回 navigating
+- resumePendingApply 面板关闭保护：自动创建面板 + 重启 Observer
+- 7 个适配器 applyToPosition 统一模式：记录 URL → 点击 → 等待 2s → 检测跳转 → 返回 navigating
+- 修复点击第一个岗位后跳转导致剩余岗位无法投递的核心 bug
+
 ## v3.5.0 (2026-07-14)
 **功能** — 智联招聘全子站适配（5个新子域名）
 - 新增：智联闲才(xiancai)、政企招聘(govjob)、智联校园(xiaoyuan)、智联卓聘(highpin)、智引海外(overseas)
