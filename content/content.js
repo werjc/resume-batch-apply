@@ -225,7 +225,9 @@
       const raw = ad.parseSearchResults();
       if (!raw || !raw.length) {
         panelEl.querySelector('.rba-joblist').innerHTML = '<div class="rba-empty">当前页面未解析到岗位，请确认在搜索结果页</div>';
-        logError('parseSearchResults', '解析结果为空', ad.name);
+        // 自动捕获页面 DOM 指纹，用于调试未知站点
+        const fp = captureDomFingerprint();
+        logError('parseSearchResults', '解析结果为空 — ' + ad.name, JSON.stringify(fp).slice(0, 500));
       }
       allJobs = raw.map(j => {
         if (j.element) jobElementMap.set(j.id, j.element);
@@ -472,7 +474,7 @@
       const r = await chrome.storage.local.get('errorLog');
       const logs = r.errorLog || [];
       if (!logs.length) return toast('没有错误日志 ✓', 'success');
-      const text = logs.map(l => `[${l.time.slice(5,16)}] ${l.source}: ${l.message}`).join('\n');
+      const text = logs.map(l => `[${l.time.slice(5,16)}] ${l.source}: ${l.message}` + (l.detail ? `\n  detail: ${l.detail}` : '')).join('\n');
       // 复制到剪贴板
       await navigator.clipboard.writeText(text);
       toast(`已复制 ${logs.length} 条日志到剪贴板`, 'info');
@@ -808,7 +810,54 @@
     } catch (e) { /* 静默 */ }
   }
 
-  // ===== 初始加载 =====
+  // ===== DOM 指纹诊断（用于调试未知站点的选择器） =====
+  function captureDomFingerprint() {
+    const fp = { url: window.location.href, hostname: window.location.hostname, pathname: window.location.pathname, containers: [], topClasses: [], jobLikeElements: 0 };
+    try {
+      // 收集所有 class 名及其出现次数
+      const clsCount = {};
+      document.querySelectorAll('[class]').forEach(el => {
+        const cls = String(el.className || '');
+        cls.split(/\s+/).filter(Boolean).forEach(c => {
+          clsCount[c] = (clsCount[c] || 0) + 1;
+        });
+      });
+      // 取出现次数最多的 30 个 class，过滤掉常见的框架类
+      const skipSet = new Set(['clearfix','container','wrapper','row','col','active','hidden','show','hide','visible','disabled','selected','hover','focus','open','close','left','right','center','top','bottom','animated','fade','slide','transition','loading','loaded','empty','error','success','warning','info']);
+      fp.topClasses = Object.entries(clsCount)
+        .filter(([c]) => !skipSet.has(c.toLowerCase()) && c.length > 1)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 30)
+        .map(([c, n]) => `${c}(${n})`);
+      // 找子元素 ≥3 的容器（潜在的岗位列表）
+      document.querySelectorAll('ul, ol, [class*="list"], [class*="List"], [class*="wrap"], [class*="Wrap"], [class*="container"], [class*="box"], section, main, article, [class*="result"], [class*="content"]').forEach(el => {
+        const children = el.children;
+        if (children.length >= 3) {
+          const tagCounts = {};
+          Array.from(children).forEach(c => { tagCounts[c.tagName] = (tagCounts[c.tagName] || 0) + 1; });
+          const dominantTag = Object.entries(tagCounts).sort((a, b) => b[1] - a[1])[0];
+          if (dominantTag && dominantTag[1] >= 3) {
+            fp.containers.push({
+              tag: el.tagName,
+              cls: String(el.className || '').slice(0, 80),
+              childCount: children.length,
+              childTag: dominantTag[0],
+              childTagCount: dominantTag[1],
+              sampleChildCls: Array.from(children).slice(0, 3).map(c => String(c.className || '').slice(0, 60))
+            });
+          }
+        }
+      });
+      // 只保留最有可能是岗位列表的容器（子元素 class 名有规律的）
+      fp.containers = fp.containers
+        .filter(c => c.childCount >= 3 && c.childCount <= 200)
+        .sort((a, b) => b.childCount - a.childCount)
+        .slice(0, 10);
+      // 统计"看起来像岗位卡片"的元素数量
+      fp.jobLikeElements = document.querySelectorAll('[class*="job"], [class*="position"], [class*="item"], [class*="card"], [class*="list-item"]').length;
+    } catch (e) { fp.error = e.message; }
+    return fp;
+  }
   setTimeout(async () => {
     const ad = getAdapter();
     if (ad && ad.isSearchPage()) {
