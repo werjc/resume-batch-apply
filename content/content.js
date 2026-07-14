@@ -471,14 +471,45 @@
 
   async function showDebugLog() {
     try {
-      const r = await chrome.storage.local.get('errorLog');
-      const logs = r.errorLog || [];
-      if (!logs.length) return toast('没有错误日志 ✓', 'success');
-      const text = logs.map(l => `[${l.time.slice(5,16)}] ${l.source}: ${l.message}` + (l.detail ? `\n  detail: ${l.detail}` : '')).join('\n');
-      // 复制到剪贴板
+      const parts = [];
+      // 1. DOM 指纹（始终捕获）
+      const fp = captureDomFingerprint();
+      parts.push('=== DOM 指纹 ===');
+      parts.push(JSON.stringify(fp, null, 2));
+      // 2. 适配器诊断
+      const ad = getAdapter();
+      parts.push('\n=== 适配器诊断 ===');
+      if (ad) {
+        parts.push(`name: ${ad.name}`);
+        parts.push(`isSearchPage: ${ad.isSearchPage()}`);
+        const els = ad.getJobElements();
+        parts.push(`getJobElements: ${els.length} 个`);
+        if (els.length > 0) {
+          parts.push(`  前3个 class: ${Array.from(els).slice(0,3).map(e => String(e.className||'').slice(0,80)).join(' | ')}`);
+        }
+        const raw = ad.parseSearchResults();
+        parts.push(`parseSearchResults: ${raw.length} 个岗位`);
+        if (raw.length > 0) {
+          parts.push(`  前3个: ${raw.slice(0,3).map(j => `${j.title}@${j.company}`).join(' | ')}`);
+        }
+      } else {
+        parts.push('适配器: null');
+      }
+      // 3. 错误日志
+      parts.push('\n=== 错误日志 ===');
+      try {
+        const r = await chrome.storage.local.get('errorLog');
+        const logs = r.errorLog || [];
+        if (logs.length) {
+          parts.push(logs.map(l => `[${l.time.slice(5,16)}] ${l.source}: ${l.message}` + (l.detail ? `\n  detail: ${l.detail}` : '')).join('\n'));
+        } else {
+          parts.push('(空)');
+        }
+      } catch (e) { parts.push('读取失败: ' + e.message); }
+      const text = parts.join('\n');
       await navigator.clipboard.writeText(text);
-      toast(`已复制 ${logs.length} 条日志到剪贴板`, 'info');
-    } catch (e) { toast('读取日志失败', 'error'); }
+      toast(`已复制诊断信息到剪贴板`, 'info');
+    } catch (e) { toast('读取日志失败: ' + e.message, 'error'); }
   }
   async function handlePdfUpload(e) {
     const file = e.target.files[0];
