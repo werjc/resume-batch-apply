@@ -45,6 +45,9 @@ class ZhaopinAdapter extends BaseAdapter {
 
   getJobElements() {
     const selectors = [
+      // --- 智联校园 (xiaoyuan) 真实 DOM ---
+      '.position-list__item', '.position-card',
+      '[class*="position-list"] > div[class]',
       // --- 智联主站专用 ---
       '.joblist-box__item', '.joblist-box > div[class]',
       '.positionlist > .item', '.positionlist > div[class]',
@@ -90,27 +93,32 @@ class ZhaopinAdapter extends BaseAdapter {
     for (const sel of selectors) {
       try {
         const elements = document.querySelectorAll(sel);
-        if (elements.length >= 3) return Array.from(elements);
+        if (elements.length >= 3) return this._excludeOwnPanel(elements);
       } catch (e) { /* skip */ }
     }
     return [];
   }
 
   extractJobInfo(element) {
-    const { title, company } = this._extractBoth(element);
+    // 智联校园的卡片结构特殊：职位名在 position-card__job-name
+    const isCampus = !!(element.querySelector('.position-card__job-name'));
+    const { title: baseTitle, company: baseCompany } = this._extractBoth(element);
+    // 校园站优先用专用选择器
+    const title = isCampus ? (element.querySelector('.position-card__job-name')?.textContent?.trim() || baseTitle) : baseTitle;
+    const company = isCampus ? (element.querySelector('.position-card__company__tabs-item')?.textContent?.trim() || element.querySelector('.position-card__label')?.textContent?.trim() || baseCompany) : baseCompany;
     const url = this._extractJobUrl(element);
     const companyUrl = this._extractCompanyUrl(element);
 
-    const salaryEl = element.querySelector('.jobinfo__salary, .salary, [class*="salary"], .zwyx, .salaryText');
+    const salaryEl = element.querySelector('.position-card__salary, .jobinfo__salary, .salary, [class*="salary"], .zwyx, .salaryText');
     const salary = salaryEl ? salaryEl.textContent.trim() : '';
 
     const dateEl = element.querySelector('.jobinfo__time, .time, [class*="time"], [class*="date"], .fbdate');
     const date = dateEl ? dateEl.textContent.trim() : '';
 
-    const locationEl = element.querySelector('.jobinfo__area, .area, [class*="area"], .gzdd');
+    const locationEl = element.querySelector('.position-card__city-name, .jobinfo__area, .area, [class*="area"], .gzdd');
     const location = locationEl ? locationEl.textContent.trim() : '';
 
-    const tags = Array.from(element.querySelectorAll('.jobinfo__tag, .job-tag, .welfare, [class*="tag"], .job-demand span'))
+    const tags = Array.from(element.querySelectorAll('.position-card__tags__item, .jobinfo__tag, .job-tag, .welfare, [class*="tag"], .job-demand span'))
       .map(t => t.textContent.trim())
       .filter(Boolean);
 

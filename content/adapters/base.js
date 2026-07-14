@@ -238,9 +238,16 @@ class BaseAdapter {
    * @param {Document} doc
    * @returns {Array<Element>}
    */
+  /** 排除扩展自身面板内的元素 */
+  _excludeOwnPanel(elements) {
+    const panel = document.getElementById('rba-panel');
+    if (!panel) return Array.from(elements);
+    return Array.from(elements).filter(el => !panel.contains(el));
+  }
+
   _getAllPossibleCards(doc) {
     // 1. 先试子类提供的专用选择器（结果直接信任，不校验内容）
-    const fromAdapter = this.getJobElements();
+    const fromAdapter = this._excludeOwnPanel(this.getJobElements());
     if (fromAdapter.length > 0) return fromAdapter;
 
     // 2. 全局通用选择器——覆盖面极广（选择器命中即信任，跳过内容校验）
@@ -301,14 +308,14 @@ class BaseAdapter {
         // 选择器命中 ≥3 个元素 → 直接信任，不做内容关键词校验
         if (elements.length >= 3) {
           // 只做最基本的过滤：排除空元素
-          const valid = Array.from(elements).filter(el => el.textContent.trim().length >= 10);
+          const valid = this._excludeOwnPanel(Array.from(elements).filter(el => el.textContent.trim().length >= 10));
           if (valid.length >= 3) return valid;
         }
       } catch (e) { /* skip */ }
     }
 
     // 3. 终极兜底：找兄弟重复结构（只有这里做内容校验，但校验也只用排除法）
-    return this._findRepeatingSiblings(doc);
+    return this._excludeOwnPanel(this._findRepeatingSiblings(doc));
   }
 
   /**
