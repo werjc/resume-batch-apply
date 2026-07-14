@@ -1,5 +1,11 @@
 # 版本更新日志
 
+## v3.6.1 (2026-07-14)
+**修复** — 岗位解析降级兜底 + 面板重复创建 + 低风险累积bug
+- 8个适配器 parseSearchResults 统一降级：getJobElements 空→_getAllPossibleCards 兜底
+- createPanel 加旧面板清理（remove旧DOM + 旧style），防止多次调用产生重复面板
+- refreshPanelData 开始前暂停瀑布流，防止并发写入 allJobs
+
 ## v3.6.0 (2026-07-14)
 **修复** — 全域批量投递：8网站统一断点续投
 - executeApply 层自动检测 URL 跳转（beforeUrl vs afterUrl），不再依赖适配器单独返回 navigating

@@ -64,7 +64,7 @@ class Job51Adapter extends BaseAdapter {
     };
   }
 
-  parseSearchResults() { return this.getJobElements().map(el => this.extractJobInfo(el)); }
+  parseSearchResults() { let els = this.getJobElements(); if (!els.length) els = this._getAllPossibleCards(document); return els.map(el => this.extractJobInfo(el)); }
 
   async applyToPosition(element) {
     try {

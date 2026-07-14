@@ -127,9 +127,15 @@
   }
 
   function createPanel() {
+    // 先清理可能存在的旧面板（防止多次调用产生重复DOM）
+    const oldPanel = document.getElementById('rba-panel');
+    if (oldPanel) oldPanel.remove();
+    const oldStyle = document.getElementById('rba-panel-style');
+    if (oldStyle) oldStyle.remove();
     const ad = getAdapter();
     currentSiteName = ad ? ad.name : '';
     const style = document.createElement('style');
+    style.id = 'rba-panel-style';
     style.textContent = PANEL_CSS;
     document.head.appendChild(style);
     panelEl = document.createElement('div');
@@ -200,6 +206,7 @@
   async function refreshPanelData() {
     const ad = getAdapter();
     if (!ad) return;
+    stopWaterfallWatch(); // 暂停瀑布流防止并发写入 allJobs
     try {
       const st = ad.checkLoginStatus();
       panelEl.querySelector('.rba-sitename').textContent = ad.name;
@@ -226,11 +233,9 @@
         const risk = ad._assessJobRisk ? ad._assessJobRisk(j) : { level: 'low', score: 0, reasons: [] };
         return { id: j.id, title: j.title, company: j.company, url: j.url || '', companyUrl: j.companyUrl || '', salary: j.salary, location: j.location, date: j.date, companyType: j.companyType, jobType: j.jobType, education: j.education || 'none', risk, tags: j.tags, applied: appliedIds.includes(j.id) };
       });
-    } catch (e) {
-      logError('refreshPanelData', '面板数据刷新失败', e.message);
-      allJobs = []; jobElementMap.clear(); seenJobIds.clear();
-      panelEl.querySelector('.rba-joblist').innerHTML = '<div class="rba-empty">⚠ 解析失败，请刷新页面重试</div>';
     }
+    // 防御：确保 allJobs 不会被重复累加（清掉同步可能产生的脏数据）
+    allJobs.forEach(j => { delete j._rendered; });
     selectedIds.clear(); applyFilters();
     autoAiAnalyze();
     startWaterfallWatch();

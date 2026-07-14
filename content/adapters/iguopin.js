@@ -73,7 +73,7 @@ class IguopinAdapter extends BaseAdapter {
   }
 
   parseSearchResults() {
-    return this.getJobElements().map(el => this.extractJobInfo(el));
+    let els = this.getJobElements(); if (!els.length) els = this._getAllPossibleCards(document); return els.map(el => this.extractJobInfo(el));
   }
 
   async applyToPosition(element) {

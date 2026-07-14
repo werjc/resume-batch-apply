@@ -136,7 +136,10 @@ class ZhaopinAdapter extends BaseAdapter {
   }
 
   parseSearchResults() {
-    return this.getJobElements().map(el => this.extractJobInfo(el));
+    let elements = this.getJobElements();
+    // 专用选择器未命中 → 降级到基类万能探测器
+    if (!elements.length) elements = this._getAllPossibleCards(document);
+    return elements.map(el => this.extractJobInfo(el));
   }
 
   async applyToPosition(element) {

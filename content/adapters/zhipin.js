@@ -112,7 +112,8 @@ class ZhipinAdapter extends BaseAdapter {
   }
 
   parseSearchResults() {
-    const elements = this.getJobElements();
+    let elements = this.getJobElements();
+    if (!elements.length) elements = this._getAllPossibleCards(document);
     return elements.map(el => this.extractJobInfo(el));
   }
 
