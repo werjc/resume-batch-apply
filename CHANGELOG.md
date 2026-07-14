@@ -1,5 +1,36 @@
 # 版本更新日志
 
+## v3.7.0 (2026-07-14)
+**功能** — AI 分析改为手动逐批模式，风险分析 + 简历匹配同时进行
+- 每点一次「AI 分析」只分析 10 条**未分析过**的岗位（不是永远取前 10 条）
+- 再点一次继续分析下 10 条，直到全部完成
+- 筛选逻辑：`allJobs.filter(j => !j.risk.ai)` — 找到所有未分析岗位，取前 10
+- 分析完提示剩余数；新刷新出的岗位也会被自动纳入未分析池
+- content.js + popup.js 同步改造
+
+## v3.6.5 (2026-07-14)
+**修复** — 智联校园岗位识别（根本性修复）
+- **根因**：`getJobElements()` 的选择器 `[class*="joblist"] > div[class]` 匹配到了扩展自身面板的 `.rba-joblist > .rba-jobitem`（70 个），永远不会降级到万能兜底
+- **修复 1**：base.js 新增 `_excludeOwnPanel()` 方法，`_getAllPossibleCards` 全链路排除 `#rba-panel` 内元素
+- **修复 2**：zhaopin.js 的 `getJobElements` 最优先匹配智联校园真实 DOM（`position-list__item`、`position-card`）
+- **修复 3**：zhaopin.js 的 `extractJobInfo` 校园站用 `position-card__job-name`、`position-card__salary`、`position-card__city-name` 专用选择器
+- 新增 `captureDomFingerprint()`：解析失败时自动捕获页面 class 名统计和容器结构
+
+## v3.6.4 (2026-07-14)
+**功能** — 🔧 调试按钮改为始终可用，不依赖错误日志
+- 输出：DOM 指纹（class 名 + 容器结构）+ 适配器诊断（getJobElements 数量、parseSearchResults 结果）+ 错误日志
+- 即使没有错误日志也能诊断未知站点的 DOM 结构
+
+## v3.6.3 (2026-07-14)
+**功能** — DOM 指纹诊断：解析不到岗位时自动捕获页面结构信息
+- 收集页面前 30 个高频 class 名、10 个最有可能是岗位列表的容器及其子元素 class
+- 错误日志 detail 字段存储 JSON，debug 按钮输出 detail
+
+## v3.6.2 (2026-07-14)
+**修复** — 扩展无法加载的紧急修复
+- refreshPanelData 的 try 块缺少对应 catch → content script 语法错误 → 扩展完全不可用
+- 补上 `catch (e) { logError(...) }`
+
 ## v3.6.1 (2026-07-14)
 **修复** — 岗位解析降级兜底 + 面板重复创建 + 低风险累积bug
 - 8个适配器 parseSearchResults 统一降级：getJobElements 空→_getAllPossibleCards 兜底

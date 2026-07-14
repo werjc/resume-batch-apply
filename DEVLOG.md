@@ -1,5 +1,59 @@
 # 开发日志（试错与纠正）
 
+## 2026-07-14 — v3.7.0 AI 手动逐批分析
+
+**问题**: 用户反馈"AI 简历匹配程度只分析前 10 条"。此前 v3.0.0 修复了 AI 卡在分析中的 bug，但方案是硬限制只分析前 10 条，其余 40 条永远不会被分析。
+
+**需求澄清**: 用户不要全自动循环（会一口气烧掉大量 API token），要手动控制：点一次分析 10 个，再点一次再分析 10 个。但绝对不能出现"每次只分析前 10 个"的 bug。
+
+**关键设计决策**:
+- 不取 `allJobs.slice(0, 10)`（永远取前 10 个），而是 `allJobs.filter(j => !j.risk.ai)`（找所有未分析过的），取前 10
+- 已分析过的岗位 `risk.ai === true`，自动跳过
+- 如果中间刷新页面新增了 8 个岗位，它们也自动进入未分析池
+
+**自我审查**:
+- 之前 v3.7.0 初版实现了全自动循环，用户否决 → 改为手动逐批
+- 确认 `autoAiAnalyze()` 不再全部标记为 analyzing（这是 v3.0.0 的旧 bug 模式）
+
+---
+
+## 2026-07-14 — v3.6.5 智联校园岗位识别修复
+
+**问题**: 智联校园一直识别不到岗位。用户反复反馈。
+
+**第一次尝试（v3.6.1）**: 所有适配器 `parseSearchResults` 加降级：`getJobElements()` 返回空时走 `_getAllPossibleCards`。
+**失败原因**: `getJobElements()` 根本不返回空——它返回了 70 个 `rba-jobitem`，即扩展自己的面板元素！
+
+**第二次尝试（v3.6.3）**: 加 DOM 指纹诊断，让用户点 🔧 拷贝页面结构给我。
+**发现**: 用户拷贝的数据显示 `getJobElements: 70 个`，前三个是 `rba-jobitem`。智联校园真实卡片是 `position-list__item`（20 个，class 为 `position-card__job-name` 等）。
+
+**根因**: 
+1. 选择器 `[class*="joblist"] > div[class]` 匹配了扩展面板 `.rba-joblist > .rba-jobitem`
+2. 智联校园用 `position-list` / `position-card` 命名体系，我们没有一个选择器能匹配
+
+**最终方案**:
+1. base.js: 新增 `_excludeOwnPanel()` 方法，从 `#rba-panel` 外过滤元素
+2. zhaopin.js: 新增 `position-list__item`、`position-card` 专用选择器
+3. zhaopin.js `extractJobInfo`: 校园站先用 `position-card__job-name` 等专用选择器
+
+**教训**: 通用选择器太宽会误伤自身 DOM。所有 DOM 查询都要排除 #rba-panel。
+
+---
+
+## 2026-07-14 — v3.6.2 扩展无法加载
+
+**问题**: 用户说"拓展直接点不开了"。
+
+**排查**: `node -e "new Function(...)"` 逐个文件语法检查，`content/content.js` 报 "Missing catch or finally after try"。
+
+**根因**: v3.6.1 在 `refreshPanelData()` 外包了 `try {`，但括号 `}` 关掉了 try 块后没有 `catch`。这是 v3.6.1 提交时的笔误。
+
+**纠正**: 补上 `catch (e) { logError('refreshPanelData', '刷新数据失败', e.message); }`。
+
+**教训**: 任何 try 块提交前必须确认有对应的 catch/finally。应加入提交前 lint 检查。
+
+---
+
 ## 2026-07-14 — v3.6.0 全域批量投递修复
 
 **问题**: v3.4.0 的断点续投只对 BOSS直聘生效。用户测试发现智联等所有网站都是第一个岗位跳转后停止。
