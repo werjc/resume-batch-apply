@@ -403,23 +403,28 @@
   }
 
   // 自动 AI（面板打开时触发，不阻塞 UI）
-  const AI_BATCH_SIZE = 10;
   async function autoAiAnalyze() {
     try {
       const r = await chrome.storage.local.get('aiConfig');
       const cfg = r.aiConfig;
       if (!cfg || !cfg.key || !allJobs.length) return;
-      // 全部标记为分析中
-      allJobs.forEach(j => { j.risk = { level: 'analyzing', score: 0, reasons: ['AI分析中...'], ai: true }; });
-      applyFilters();
       await runAiAnalysis();
     } catch (e) { /* 静默 */ }
   }
 
+  const AI_BATCH_SIZE = 10;
   async function runAiAnalysis() {
     const key = panelEl.querySelector('#aiKey').value.trim();
     if (!key) return toast('请先填入 API Key', 'info');
     if (!allJobs.length) return toast('没有岗位数据，请先刷新或爬取', 'info');
+
+    // 找尚未 AI 分析过的岗位（risk.ai 不为 true）
+    const unanalyzed = allJobs.filter(j => !j.risk || !j.risk.ai);
+    if (!unanalyzed.length) {
+      toast('所有岗位已完成 AI 分析 ✓', 'success');
+      panelEl.querySelector('#aiStatus').textContent = '全部已分析';
+      return;
+    }
 
     const btn = panelEl.querySelector('#btnAiAnalyze'); const st = panelEl.querySelector('#aiStatus');
     btn.disabled = true;
@@ -435,51 +440,49 @@
     const finalModel = model || (provider === 'deepseek' ? 'deepseek-chat' : provider === 'openai' ? 'gpt-4o-mini' : 'deepseek-chat');
     const resumeText = panelEl.querySelector('#aiResume').value.trim();
 
-    // 分批：每次最多 AI_BATCH_SIZE 个岗位
-    const total = allJobs.length;
-    const batches = Math.ceil(total / AI_BATCH_SIZE);
-    let totalUpdated = 0;
+    // 取本批次（最多10条未分析的）
+    const batch = unanalyzed.slice(0, AI_BATCH_SIZE);
+    const remainingAfter = unanalyzed.length - batch.length;
+    st.textContent = `分析中（${batch.length} 个）...`;
 
-    for (let b = 0; b < batches; b++) {
-      const start = b * AI_BATCH_SIZE;
-      const end = Math.min(start + AI_BATCH_SIZE, total);
-      const batch = allJobs.slice(start, end).map(j => ({ id: j.id, title: j.title, company: j.company, salary: j.salary, companyType: j.companyType }));
+    // 标记为分析中
+    batch.forEach(j => { j.risk = { level: 'analyzing', score: 0, reasons: ['AI分析中...'], ai: true }; });
+    applyFilters();
 
-      st.textContent = `分析中 (${start + 1}-${end}/${total})...`;
-      if (batches > 1) toast(`第 ${b + 1}/${batches} 批（${batch.length} 个岗位）`, 'info');
-
-      try {
-        const resp = await chrome.runtime.sendMessage({ type: 'aiAnalyze', jobs: batch, config: { endpoint, model: finalModel, key }, resume: resumeText || undefined });
-        if (!resp || resp.error) {
-          st.textContent = `第 ${b + 1} 批失败: ${resp?.error || '未知错误'}`;
-          // 标记这批为分析失败
-          for (const j of batch) {
-            const job = allJobs.find(x => x.id === j.id);
-            if (job && job.risk?.level === 'analyzing') job.risk = { level: 'low', score: 0, reasons: ['分析失败'], ai: true };
-          }
-          applyFilters();
-          continue;
-        }
-        let updated = 0;
-        for (const r of (resp.results || [])) {
-          const job = allJobs.find(j => j.id === r.id);
-          if (job) {
-            if (r.risk) job.risk = { level: r.risk.level || 'low', score: r.risk.score || 0, reasons: r.risk.reasons || [], ai: true };
-            if (r.companyType && r.companyType !== 'unknown') job.companyType = r.companyType;
-            if (r.matchScore !== undefined) job.matchScore = r.matchScore;
-            if (r.matchReasons) job.matchReasons = r.matchReasons;
-            updated++;
-          }
-        }
-        totalUpdated += updated;
+    const payload = batch.map(j => ({ id: j.id, title: j.title, company: j.company, salary: j.salary, companyType: j.companyType }));
+    try {
+      const resp = await chrome.runtime.sendMessage({ type: 'aiAnalyze', jobs: payload, config: { endpoint, model: finalModel, key }, resume: resumeText || undefined });
+      if (!resp || resp.error) {
+        st.textContent = resp?.error || '请求失败';
+        batch.forEach(j => { j.risk = { level: 'low', score: 0, reasons: ['分析失败'], ai: true }; });
         applyFilters();
-      } catch (e) {
-        st.textContent = `第 ${b + 1} 批请求失败: ${e.message}`;
+        btn.disabled = false;
+        return;
       }
+      let updated = 0;
+      for (const r of (resp.results || [])) {
+        const job = allJobs.find(j => j.id === r.id);
+        if (job) {
+          if (r.risk) job.risk = { level: r.risk.level || 'low', score: r.risk.score || 0, reasons: r.risk.reasons || [], ai: true };
+          if (r.companyType && r.companyType !== 'unknown') job.companyType = r.companyType;
+          if (r.matchScore !== undefined) job.matchScore = r.matchScore;
+          if (r.matchReasons) job.matchReasons = r.matchReasons;
+          updated++;
+        }
+      }
+      applyFilters();
+      if (remainingAfter > 0) {
+        st.textContent = `已分析 ${updated} 个 · 还剩 ${remainingAfter} 个未分析`;
+        toast(`更新 ${updated} 个，还有 ${remainingAfter} 个（再点一次继续）`, 'success');
+      } else {
+        st.textContent = `全部完成 · 共 ${updated} 个`;
+        toast('所有岗位 AI 分析完成 ✓', 'success');
+      }
+    } catch (e) {
+      st.textContent = '请求失败: ' + e.message;
+      batch.forEach(j => { j.risk = { level: 'low', score: 0, reasons: ['网络错误'], ai: true }; });
+      applyFilters();
     }
-
-    st.textContent = `完成，共更新 ${totalUpdated} 个岗位`;
-    toast(`AI 分析完成：${batches} 批共更新 ${totalUpdated} 个岗位`, 'success');
     btn.disabled = false;
   }
   async function saveFilters() { const d = { filterDate: panelEl.querySelector('#filterDate').value, filterCompanyType: panelEl.querySelector('#filterCompanyType').value, filterEducation: panelEl.querySelector('#filterEducation').value, filterRisk: panelEl.querySelector('#filterRisk').value, filterCollapsed: panelEl.querySelector('.rba-filter-toggle').classList.contains('collapsed') }; await chrome.storage.local.set({ popupFilters: d }).catch(() => {}); }

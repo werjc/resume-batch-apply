@@ -879,6 +879,14 @@ async function runAiAnalysis() {
   if (!key) return showToast('请先填入 API Key', 'info');
   if (!allJobs.length) return showToast('没有岗位数据', 'info');
 
+  // 找尚未 AI 分析过的岗位
+  const unanalyzed = allJobs.filter(j => !j.risk || !j.risk.ai);
+  if (!unanalyzed.length) {
+    showToast('所有岗位已完成 AI 分析 ✓', 'success');
+    dom.aiStatus.textContent = '全部已分析';
+    return;
+  }
+
   const provider = dom.aiProvider.value;
   const model = dom.aiModel.value.trim() || (provider === 'deepseek' ? 'deepseek-chat' : 'gpt-4o-mini');
   const endpoint = provider === 'deepseek' ? 'https://api.deepseek.com/chat/completions'
@@ -888,54 +896,48 @@ async function runAiAnalysis() {
 
   const BATCH = 10;
   const resumeText = dom.aiResume.value.trim();
-  const total = allJobs.length;
-  const batches = Math.ceil(total / BATCH);
+  const batch = unanalyzed.slice(0, BATCH);
+  const remainingAfter = unanalyzed.length - batch.length;
+  dom.aiStatus.textContent = `分析中（${batch.length} 个）...`;
 
-  // 全部标记为分析中
-  allJobs.forEach(j => { j.risk = { level: 'analyzing', score: 0, reasons: ['AI分析中...'], ai: true }; });
+  // 标记为分析中
+  batch.forEach(j => { j.risk = { level: 'analyzing', score: 0, reasons: ['AI分析中...'], ai: true }; });
   applyFilters();
 
-  let totalUpdated = 0;
-
-  for (let b = 0; b < batches; b++) {
-    const start = b * BATCH;
-    const end = Math.min(start + BATCH, total);
-    const batch = allJobs.slice(start, end).map(j => ({ id: j.id, title: j.title, company: j.company, salary: j.salary, companyType: j.companyType }));
-
-    dom.aiStatus.textContent = `分析中 (${start + 1}-${end}/${total})...`;
-    if (batches > 1) showToast(`第 ${b + 1}/${batches} 批（${batch.length} 个岗位）`, 'info');
-
-    try {
-      const resp = await chrome.runtime.sendMessage({
-        type: 'aiAnalyze', jobs: batch, config: { endpoint, model, key }, resume: resumeText || undefined
-      });
-      if (!resp || resp.error) {
-        dom.aiStatus.textContent = `第 ${b + 1} 批失败: ${resp?.error || '未知错误'}`;
-        for (const j of batch) {
-          const job = allJobs.find(x => x.id === j.id);
-          if (job && job.risk?.level === 'analyzing') job.risk = { level: 'low', score: 0, reasons: ['分析失败'], ai: true };
-        }
-        applyFilters();
-        continue;
-      }
-      let updated = 0;
-      for (const r of (resp.results || [])) {
-        const job = allJobs.find(j => j.id === r.id);
-        if (job) {
-          if (r.risk) job.risk = { level: r.risk.level || 'low', score: r.risk.score || 0, reasons: r.risk.reasons || [], ai: true };
-          if (r.companyType && r.companyType !== 'unknown') job.companyType = r.companyType;
-          if (r.matchScore !== undefined) { job.matchScore = r.matchScore; job.matchReasons = r.matchReasons; }
-          updated++;
-        }
-      }
-      totalUpdated += updated;
+  const payload = batch.map(j => ({ id: j.id, title: j.title, company: j.company, salary: j.salary, companyType: j.companyType }));
+  try {
+    const resp = await chrome.runtime.sendMessage({
+      type: 'aiAnalyze', jobs: payload, config: { endpoint, model, key }, resume: resumeText || undefined
+    });
+    if (!resp || resp.error) {
+      dom.aiStatus.textContent = resp?.error || '请求失败';
+      batch.forEach(j => { j.risk = { level: 'low', score: 0, reasons: ['分析失败'], ai: true }; });
       applyFilters();
-    } catch (e) {
-      dom.aiStatus.textContent = `第 ${b + 1} 批请求失败: ${e.message}`;
+      dom.btnAiAnalyze.disabled = false;
+      return;
     }
+    let updated = 0;
+    for (const r of (resp.results || [])) {
+      const job = allJobs.find(j => j.id === r.id);
+      if (job) {
+        if (r.risk) job.risk = { level: r.risk.level || 'low', score: r.risk.score || 0, reasons: r.risk.reasons || [], ai: true };
+        if (r.companyType && r.companyType !== 'unknown') job.companyType = r.companyType;
+        if (r.matchScore !== undefined) { job.matchScore = r.matchScore; job.matchReasons = r.matchReasons; }
+        updated++;
+      }
+    }
+    applyFilters();
+    if (remainingAfter > 0) {
+      dom.aiStatus.textContent = `已分析 ${updated} 个 · 还剩 ${remainingAfter} 个`;
+      showToast(`更新 ${updated} 个，还有 ${remainingAfter} 个未分析（再点继续）`, 'success');
+    } else {
+      dom.aiStatus.textContent = `全部完成 · 共 ${updated} 个`;
+      showToast('所有岗位 AI 分析完成 ✓', 'success');
+    }
+  } catch (e) {
+    dom.aiStatus.textContent = '请求失败: ' + e.message;
+    batch.forEach(j => { j.risk = { level: 'low', score: 0, reasons: ['网络错误'], ai: true }; });
+    applyFilters();
   }
-
-  dom.aiStatus.textContent = `完成，共更新 ${totalUpdated} 个岗位`;
-  showToast(`AI 分析完成：${batches} 批共更新 ${totalUpdated} 个岗位`, 'success');
   dom.btnAiAnalyze.disabled = false;
 }
