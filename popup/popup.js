@@ -112,8 +112,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 function detectSite() {
   const url = currentSiteUrl;
   const siteMap = [
-    { domain: 'zhipin.com', name: 'BOSS直聘' },
+    // 智联子站（精确匹配优先）
+    { domain: 'xiancai.zhaopin.com', name: '智联闲才' },
+    { domain: 'govjob.zhaopin.com', name: '政企招聘' },
+    { domain: 'xiaoyuan.zhaopin.com', name: '智联校园' },
+    { domain: 'highpin.zhaopin.com', name: '智联卓聘' },
+    { domain: 'overseas.zhaopin.com', name: '智引海外' },
     { domain: 'zhaopin.com', name: '智联招聘' },
+    // 其余站点
+    { domain: 'zhipin.com', name: 'BOSS直聘' },
     { domain: 'iguopin.com', name: '国聘' },
     { domain: 'ncss.cn', name: '大学生就业服务平台' },
     { domain: '51job.com', name: '前程无忧' },

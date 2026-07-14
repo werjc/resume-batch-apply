@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "一键批量投递简历",
-  "version": "3.4.0",
+  "version": "3.5.0",
   "description": "支持BOSS直聘、智联等8大招聘网站一键批量投递。AI风险分析、简历匹配评分、瀑布流实时同步、投递统计与导出",
   "permissions": [
     "storage",
@@ -12,7 +12,8 @@
   ],
   "host_permissions": [
     "https://www.zhipin.com/*",
-    "https://www.zhaopin.com/*",
+    "https://*.zhaopin.com/*",
+    "https://zhaopin.com/*",
     "https://www.iguopin.com/*",
     "https://www.ncss.cn/*",
     "https://www.51job.com/*",
@@ -35,7 +36,7 @@
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://www.zhaopin.com/*"],
+      "matches": ["https://*.zhaopin.com/*", "https://zhaopin.com/*"],
       "js": ["content/adapters/base.js", "content/adapters/zhaopin.js", "content/content.js"],
       "run_at": "document_idle"
     },

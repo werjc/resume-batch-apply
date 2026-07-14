@@ -1,8 +1,12 @@
 /**
- * 智联招聘 (zhaopin.com) 适配器
+ * 智联招聘 (zhaopin.com) 适配器 — 覆盖全部子站
  *
- * 搜索结果页URL: https://sou.zhaopin.com/?...
- * 投递按钮常见文本："立即投递"、"申请职位"
+ * 主站:   www.zhaopin.com / sou.zhaopin.com
+ * 闲才:   xiancai.zhaopin.com   (蓝领/劳力)
+ * 政企:   govjob.zhaopin.com    (政府/国企)
+ * 校园:   xiaoyuan.zhaopin.com  (校招)
+ * 卓聘:   highpin.zhaopin.com   (高端/猎头)
+ * 海外:   overseas.zhaopin.com  (海外招聘)
  */
 
 class ZhaopinAdapter extends BaseAdapter {
@@ -10,18 +14,38 @@ class ZhaopinAdapter extends BaseAdapter {
     super();
     this.name = '智联招聘';
     this.domain = 'zhaopin.com';
+    this._detectSubSite();
+  }
+
+  _detectSubSite() {
+    const h = window.location.hostname;
+    if (h.includes('xiancai'))   this.name = '智联闲才';
+    else if (h.includes('govjob'))   this.name = '政企招聘';
+    else if (h.includes('xiaoyuan')) this.name = '智联校园';
+    else if (h.includes('highpin'))  this.name = '智联卓聘';
+    else if (h.includes('overseas')) this.name = '智引海外';
+    else if (h.includes('sou'))      this.name = '智联招聘';
   }
 
   isSearchPage() {
-    return window.location.hostname.includes('sou.zhaopin.com') ||
-           window.location.pathname.includes('/jobs/') ||
-           document.querySelector('.joblist-box') !== null ||
-           document.querySelector('.search-result-list') !== null;
+    const h = window.location.hostname;
+    const p = window.location.pathname;
+    // 主站
+    if (h.includes('sou.zhaopin.com')) return true;
+    if (p.includes('/jobs/') || p.includes('/search')) return true;
+    // 各子站路径特征
+    if (h.includes('xiancai') && (p.includes('/list') || p.includes('/search') || p === '/' || p === '')) return true;
+    if (h.includes('govjob') && (p.includes('/list') || p.includes('/search') || p === '/' || p === '')) return true;
+    if (h.includes('xiaoyuan') && (p.includes('/jobs') || p.includes('/search') || p.includes('/full') || p === '/' || p === '')) return true;
+    if (h.includes('highpin') && (p.includes('/jobs') || p.includes('/list') || p === '/' || p === '')) return true;
+    if (h.includes('overseas') && (p.includes('/jobs') || p.includes('/list') || p.includes('/search') || p === '/' || p === '')) return true;
+    // DOM 兜底
+    return document.querySelector('.joblist-box, .search-result-list, [class*="joblist"], [class*="position-list"], [class*="search-list"]') !== null;
   }
 
   getJobElements() {
     const selectors = [
-      // --- 智联专用 ---
+      // --- 智联主站专用 ---
       '.joblist-box__item', '.joblist-box > div[class]',
       '.positionlist > .item', '.positionlist > div[class]',
       '.search-result-list > li', '.search-result-list > div[class]',
@@ -29,6 +53,24 @@ class ZhaopinAdapter extends BaseAdapter {
       '[class*="joblist"] > [class*="item"]',
       '[class*="jobList"] > [class*="item"]',
       '.job-item', '.joblist-item',
+      // --- 校园 (xiaoyuan) ---
+      '.campus-job-item', '.campus-job-card',
+      '[class*="campus"] > [class*="item"]', '[class*="campus"] > [class*="card"]',
+      '.school-recruit-item', '.graduate-job-item',
+      '[class*="school"] > [class*="job"]', '[class*="school"] > [class*="item"]',
+      // --- 卓聘/高端 (highpin) ---
+      '.highpin-item', '.highpin-card', '.executive-item',
+      '[class*="high"] > [class*="job"]', '[class*="high"] > [class*="item"]',
+      '.headhunt-item', '.vip-job-item',
+      // --- 闲才/蓝领 (xiancai) ---
+      '.worker-item', '.labor-item',
+      '[class*="worker"] > [class*="item"]',
+      // --- 政企 (govjob) ---
+      '.gov-item', '.gov-job-item',
+      '[class*="gov"] > [class*="item"]', '[class*="gov"] > [class*="job"]',
+      // --- 海外 (overseas) ---
+      '.overseas-item', '.abroad-job-item',
+      '[class*="overseas"] > [class*="item"]', '[class*="overseas"] > [class*="job"]',
       // --- 通用 ---
       '.search-result > li', '.search-result > div[class]',
       '.result-list > li', '.result-list > div[class]',

@@ -1,5 +1,12 @@
 # 版本更新日志
 
+## v3.5.0 (2026-07-14)
+**功能** — 智联招聘全子站适配（5个新子域名）
+- 新增：智联闲才(xiancai)、政企招聘(govjob)、智联校园(xiaoyuan)、智联卓聘(highpin)、智引海外(overseas)
+- manifest: host_permissions + content_scripts 改为 `*.zhaopin.com` 通配
+- zhaopin.js: _detectSubSite 自动识别子站名 + isSearchPage 各子站路径 + getJobElements ~20个子站专用选择器
+- popup: detectSite 精确匹配子站域名
+
 ## v3.4.0 (2026-07-12)
 **功能** — BOSS直聘断点续投：批量投递支持跨页面跳转
 - 每次投递前自动保存剩余队列到 storage（pendingQueue）
