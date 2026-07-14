@@ -233,6 +233,8 @@
         const risk = ad._assessJobRisk ? ad._assessJobRisk(j) : { level: 'low', score: 0, reasons: [] };
         return { id: j.id, title: j.title, company: j.company, url: j.url || '', companyUrl: j.companyUrl || '', salary: j.salary, location: j.location, date: j.date, companyType: j.companyType, jobType: j.jobType, education: j.education || 'none', risk, tags: j.tags, applied: appliedIds.includes(j.id) };
       });
+    } catch (e) {
+      logError('refreshPanelData', '刷新数据失败', e.message);
     }
     // 防御：确保 allJobs 不会被重复累加（清掉同步可能产生的脏数据）
     allJobs.forEach(j => { delete j._rendered; });
