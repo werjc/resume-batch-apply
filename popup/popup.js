@@ -885,21 +885,39 @@ async function runAiAnalysis() {
     : provider === 'openai' ? 'https://api.openai.com/v1/chat/completions' : '';
 
   dom.btnAiAnalyze.disabled = true;
-  dom.aiStatus.textContent = '分析中...';
 
-  // 最多分析 10 个
-  const MAX_AI = 10;
-  if (allJobs.length > MAX_AI) showToast(`岗位较多，仅分析前 ${MAX_AI} 个（共 ${allJobs.length} 个）`, 'info');
+  const BATCH = 10;
   const resumeText = dom.aiResume.value.trim();
-  const sample = allJobs.slice(0, MAX_AI).map(j => ({ id: j.id, title: j.title, company: j.company, salary: j.salary, companyType: j.companyType }));
+  const total = allJobs.length;
+  const batches = Math.ceil(total / BATCH);
 
-  try {
-    const resp = await chrome.runtime.sendMessage({
-      type: 'aiAnalyze', jobs: sample, config: { endpoint, model, key }, resume: resumeText || undefined
-    });
-    if (!resp || resp.error) {
-      dom.aiStatus.textContent = resp?.error || '请求失败';
-    } else {
+  // 全部标记为分析中
+  allJobs.forEach(j => { j.risk = { level: 'analyzing', score: 0, reasons: ['AI分析中...'], ai: true }; });
+  applyFilters();
+
+  let totalUpdated = 0;
+
+  for (let b = 0; b < batches; b++) {
+    const start = b * BATCH;
+    const end = Math.min(start + BATCH, total);
+    const batch = allJobs.slice(start, end).map(j => ({ id: j.id, title: j.title, company: j.company, salary: j.salary, companyType: j.companyType }));
+
+    dom.aiStatus.textContent = `分析中 (${start + 1}-${end}/${total})...`;
+    if (batches > 1) showToast(`第 ${b + 1}/${batches} 批（${batch.length} 个岗位）`, 'info');
+
+    try {
+      const resp = await chrome.runtime.sendMessage({
+        type: 'aiAnalyze', jobs: batch, config: { endpoint, model, key }, resume: resumeText || undefined
+      });
+      if (!resp || resp.error) {
+        dom.aiStatus.textContent = `第 ${b + 1} 批失败: ${resp?.error || '未知错误'}`;
+        for (const j of batch) {
+          const job = allJobs.find(x => x.id === j.id);
+          if (job && job.risk?.level === 'analyzing') job.risk = { level: 'low', score: 0, reasons: ['分析失败'], ai: true };
+        }
+        applyFilters();
+        continue;
+      }
       let updated = 0;
       for (const r of (resp.results || [])) {
         const job = allJobs.find(j => j.id === r.id);
@@ -910,12 +928,14 @@ async function runAiAnalysis() {
           updated++;
         }
       }
+      totalUpdated += updated;
       applyFilters();
-      dom.aiStatus.textContent = `完成，更新 ${updated} 个岗位`;
-      showToast(`AI 分析完成：更新了 ${updated} 个岗位`, 'success');
+    } catch (e) {
+      dom.aiStatus.textContent = `第 ${b + 1} 批请求失败: ${e.message}`;
     }
-  } catch (e) {
-    dom.aiStatus.textContent = '请求失败: ' + e.message;
   }
+
+  dom.aiStatus.textContent = `完成，共更新 ${totalUpdated} 个岗位`;
+  showToast(`AI 分析完成：${batches} 批共更新 ${totalUpdated} 个岗位`, 'success');
   dom.btnAiAnalyze.disabled = false;
 }
